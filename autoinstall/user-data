@@ -1,6 +1,6 @@
 #cloud-config
 autoinstall:
-  version: 1
+  version: 1  
   identity:
     hostname: test-ubuntu
     username: ubuntu
@@ -23,14 +23,19 @@ autoinstall:
         name: system
         grub_device: true
 
+      - id: part-bios
+        type: partition
+        device: disk-system
+        size: 1M
+        flag: bios_grub
+
+
       - id: part-efi
         type: partition
         device: disk-system
-        number: 1
         size: 1G
         wipe: superblock
         flag: boot
-        grub_device: true
 
       - id: format-efi
         type: format
@@ -42,7 +47,6 @@ autoinstall:
       - id: LinuxBoot
         type: partition
         device: disk-system
-        number: 2
         size: 1G
         wipe: superblock
 
@@ -55,7 +59,6 @@ autoinstall:
       - id: luks-part
         type: partition
         device: disk-system
-        number: 3
         size: -1
         wipe: superblock
 
@@ -64,15 +67,20 @@ autoinstall:
         volume: luks-part
         key: "your-encryption-passphrase"
 
-      - name: ubuntu-vg
+      - name: vg0
         type: lvm_volgroup
         devices: [luks-volume]
         preserve: false
-        id: lvm_volgroup-0
+        id: id_vg0
 
+      - name: lv_swap
+        type: lvm_partition
+        volgroup: id_vg0
+        size: 8G
+        id: lv_swap
 
       - name: ubuntu-lv
-        volgroup: lvm_volgroup-0
+        volgroup: id_vg0
         size: -1
         preserve: false
         type: lvm_partition

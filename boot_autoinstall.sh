@@ -12,7 +12,7 @@ OUT_ISO="${HOME}/vm/ubuntu-fde-hibernate/ubuntu-autoinstall-patched.iso"
 sudo cloud-init schema --config-file $AUTOINSTALL_DIR/user-data
 
 echo "create nocloud iso"
-cloud-localds --filesystem=iso $NOCLOUD_ISO $AUTOINSTALL_DIR/user-data.yaml $AUTOINSTALL_DIR/meta-data
+cloud-localds --filesystem=iso $NOCLOUD_ISO $AUTOINSTALL_DIR/user-data $AUTOINSTALL_DIR/meta-data
 
 
 TMPDIR="$(mktemp -d)"
@@ -64,13 +64,14 @@ echo "[✓] Output ISO written to: $OUT_ISO"
 
 echo "[*] Starting QEMU VM..."
 qemu-system-x86_64 \
-  -m 4096 \
-  -smp 2 \
+  -m 8000 \
+  -cpu host \
+  -smp 12 \
   -enable-kvm \
   -drive file="$OUT_ISO",media=cdrom,index=0 \
   -drive file="$NOCLOUD_ISO",media=cdrom,index=1 \
   -drive file="$DISK_IMG",format=qcow2 \
   -boot d \
   -serial mon:stdio \
-  -net nic -net user \
+  -net none
 #    -nographic 
