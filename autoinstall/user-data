@@ -1,17 +1,18 @@
 #cloud-config
 autoinstall:
-  version: 1  
+  version: 1
+  reboot: false  # disables auto-reboot after install
   identity:
     hostname: test-ubuntu
     username: ubuntu
-    password: "$6$rounds=4096$example$3vme12UeCmzRU9HF8x0sM1O."  # 'ubuntu' hashed
+    password: "$6$pQBjjcoCGHYvtUTS$3pBKrm7luA/wnUlM/C/5Ih8peWJ2J6MM.uZ9sDXR0iFzL4fI5PESXD.XW5Ql3.LO.VwaqwE3JhQBTINqaMuie/"  # 'pass' hashed
 
 
   ssh:
     install-server: true
     authorized-keys:
       - ssh-ed25519 AAAA...  # your key here
- 
+
   storage:
     config:
       - id: disk-system
@@ -65,7 +66,7 @@ autoinstall:
       - id: luks-volume
         type: dm_crypt
         volume: luks-part
-        key: "your-encryption-passphrase"
+        key: "pass"
 
       - name: vg0
         type: lvm_volgroup
@@ -91,7 +92,7 @@ autoinstall:
         preserve: false
         type: format
         id: format-3
-    
+
       - device: format-3
         path: /
         type: mount
@@ -101,14 +102,17 @@ autoinstall:
         path: /boot
         type: mount
         id: mount-boot
-    
+
       - device: format-efi
         path: /boot/efi
         type: mount
         id: mount-efi
 
-    
-     
+
+
     late-commands:
       - curtin in-target --target=/target -- bash -c 'echo "RESUME=UUID=$(blkid -s UUID -o value /dev/mapper/vg0-lv_swap)" > /etc/initramfs-tools/conf.d/resume'
+      - curtin in-target --target=/target -- sed -i "s/quiet/quiet resume=UUID=$(blkid -s UUID -o value /dev/mapper/vg0-lv_swap)/" /etc/default/grub
+      - curtin in-target --target=/target -- sed -i 's/quiet/& systemd.network.wait-online=false/' /etc/default/grub
+      - curtin in-target --target=/target -- update-grub
       - curtin in-target --target=/target -- update-initramfs -u

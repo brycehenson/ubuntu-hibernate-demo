@@ -61,6 +61,7 @@ xorriso -as mkisofs \
 
 echo "[✓] Output ISO written to: $OUT_ISO"
 
+# pkill -f qemu-system
 
 echo "[*] Starting QEMU VM..."
 qemu-system-x86_64 \
@@ -73,5 +74,6 @@ qemu-system-x86_64 \
   -drive file="$DISK_IMG",format=qcow2 \
   -boot d \
   -serial mon:stdio \
-  -net none
+  -net none \
+  -no-reboot
 #    -nographic 
