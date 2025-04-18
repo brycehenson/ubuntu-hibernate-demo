@@ -1,0 +1,72 @@
+#cloud-config
+autoinstall:
+  version: 1
+  identity:
+    hostname: test-ubuntu
+    username: ubuntu
+    password: "$6$rounds=4096$example$3vme12UeCmzRU9HF8x0sM1O."  # 'ubuntu' hashed
+  ssh:
+    install-server: true
+    authorized-keys:
+      - ssh-ed25519 AAAA...  # your SSH pubkey here
+
+  storage:
+    config:
+      - type: disk
+        id: disk0
+        match:
+          size: largest
+        wipe: superblock-recursive
+
+      - type: partition
+        id: part-efi
+        device: disk0
+        size: 512M
+        flag: boot
+
+      - type: partition
+        id: part-crypt
+        device: disk0
+        size: -1
+
+      - type: luks
+        id: luks0
+        device: part-crypt
+        key: pass1234
+
+      - type: lvm_volgroup
+        id: vg0                # keep an id so later entries can reference it
+        name: vg0              # on‑disk VG name
+        devices:
+          - luks0              
+
+      - type: lvm_partition
+        id: lv_swap
+        volgroup: vg0
+        size: 4G
+
+      - type: lvm_partition
+        id: lv_root
+        volgroup: vg0
+        size: -1
+
+      - type: filesystem
+        id: fs-efi
+        type: fat32
+        volume: part-efi
+        mount: /boot/efi
+
+      - type: filesystem
+        id: fs-root
+        type: ext4
+        volume: lv_root
+        mount: /
+
+      - type: filesystem
+        id: fs-swap
+        type: swap
+        volume: lv_swap
+
+  late-commands:
+    - curtin in-target --target=/target -- bash -c 'echo "RESUME=UUID=$(blkid -s UUID -o value /dev/mapper/vg0-lv_swap)" > /etc/initramfs-tools/conf.d/resume'
+    - curtin in-target --target=/target -- update-initramfs -u
