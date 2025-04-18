@@ -1,14 +1,18 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+AUTOINSTALL_DIR="autoinstall"
 ISO_PATH="${HOME}/Downloads/ubuntu-24.04.2-live-server-amd64.iso"
 NOCLOUD_ISO="working/nocloud.iso"
 DISK_IMG="${HOME}/vm/ubuntu-fde-hibernate/vm-disk.qcow2"
 OUT_ISO="${HOME}/vm/ubuntu-fde-hibernate/ubuntu-autoinstall-patched.iso"
 
 
+
+sudo cloud-init schema --config-file $AUTOINSTALL_DIR/user-data
+
 echo "create nocloud iso"
-cloud-localds --filesystem=iso $NOCLOUD_ISO autoinstall/user-data autoinstall/meta-data
+cloud-localds --filesystem=iso $NOCLOUD_ISO $AUTOINSTALL_DIR/user-data $AUTOINSTALL_DIR/meta-data
 
 
 TMPDIR="$(mktemp -d)"

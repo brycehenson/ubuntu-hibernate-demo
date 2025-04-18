@@ -5,18 +5,26 @@ autoinstall:
     hostname: test-ubuntu
     username: ubuntu
     password: "$6$rounds=4096$example$3vme12UeCmzRU9HF8x0sM1O."  # 'ubuntu' hashed
+
+
   ssh:
     install-server: true
     authorized-keys:
-      - ssh-ed25519 AAAA...  # your SSH pubkey here
-
+      - ssh-ed25519 AAAA...  # your key here
   storage:
     config:
-      - type: disk
-        id: disk0
+      - id: disk0
+        type: disk
+        ptable: gpt
+        wipe: superblock
         match:
           size: largest
-        wipe: superblock-recursive
+
+      - type: partition
+        id: part-bios
+        device: disk0
+        size: 1M
+        flag: bios_grub
 
       - type: partition
         id: part-efi
@@ -24,49 +32,64 @@ autoinstall:
         size: 512M
         flag: boot
 
-      - type: partition
-        id: part-crypt
+      - id: boot-partition
+        type: partition
+        device: disk0
+        size: 1G
+
+
+      - id: encrypted-partition
+        type: partition
         device: disk0
         size: -1
 
-      - type: luks
-        id: luks0
-        device: part-crypt
-        key: pass1234
+      - id: luks-volume
+        type: dm_crypt
+        volume: encrypted-partition
+        key: "your-encryption-passphrase"
 
-      - type: lvm_volgroup
-        id: vg0                # keep an id so later entries can reference it
-        name: vg0              # on‑disk VG name
-        devices:
-          - luks0              
+      - id: vg0
+        type: lvm_volgroup
+        name: ubuntu-vg
+        devices: [luks-volume]
 
-      - type: lvm_partition
-        id: lv_swap
+      - id: lv-root
+        type: lvm_partition
+        name: root
         volgroup: vg0
-        size: 4G
+        size: 100%
 
-      - type: lvm_partition
-        id: lv_root
-        volgroup: vg0
-        size: -1
+      - id: fs-root
+        type: format
+        fstype: ext4
+        volume: lv-root
 
-      - type: filesystem
-        id: fs-efi
-        type: fat32
+      - id: mount-root
+        type: mount
+        device: fs-root
+        path: /
+
+      - id: fs-boot
+        type: format
+        fstype: ext4
+        volume: boot-partition
+
+      - id: mount-boot
+        type: mount
+        device: fs-boot
+        path: /boot
+
+      - id: fs-efi
+        type: format
+        fstype: fat32
         volume: part-efi
-        mount: /boot/efi
 
-      - type: filesystem
-        id: fs-root
-        type: ext4
-        volume: lv_root
-        mount: /
+      - id: mount-efi
+        type: mount
+        device: fs-efi
+        path: /boot/efi
 
-      - type: filesystem
-        id: fs-swap
-        type: swap
-        volume: lv_swap
 
-  late-commands:
-    - curtin in-target --target=/target -- bash -c 'echo "RESUME=UUID=$(blkid -s UUID -o value /dev/mapper/vg0-lv_swap)" > /etc/initramfs-tools/conf.d/resume'
-    - curtin in-target --target=/target -- update-initramfs -u
+    late-commands:
+      - curtin in-target --target=/target -- bash -c 'echo "RESUME=UUID=$(blkid -s UUID -o value /dev/mapper/vg0-lv_swap)" > /etc/initramfs-tools/conf.d/resume'
+      - curtin in-target --target=/target -- update-initramfs -u
