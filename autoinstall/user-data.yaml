@@ -1,0 +1,106 @@
+#cloud-config
+autoinstall:
+  version: 1
+  identity:
+    hostname: test-ubuntu
+    username: ubuntu
+    password: "$6$rounds=4096$example$3vme12UeCmzRU9HF8x0sM1O."  # 'ubuntu' hashed
+
+
+  ssh:
+    install-server: true
+    authorized-keys:
+      - ssh-ed25519 AAAA...  # your key here
+ 
+  storage:
+    config:
+      - id: disk-system
+        type: disk
+        match:
+          size: largest
+        ptable: gpt
+        wipe: superblock
+        name: system
+        grub_device: true
+
+      - id: part-efi
+        type: partition
+        device: disk-system
+        number: 1
+        size: 1G
+        wipe: superblock
+        flag: boot
+        grub_device: true
+
+      - id: format-efi
+        type: format
+        volume: part-efi
+        fstype: fat32
+        label: efi
+
+
+      - id: LinuxBoot
+        type: partition
+        device: disk-system
+        number: 2
+        size: 1G
+        wipe: superblock
+
+      - id: format-boot
+        type: format
+        volume: LinuxBoot
+        fstype: ext4
+        label: boot
+
+      - id: luks-part
+        type: partition
+        device: disk-system
+        number: 3
+        size: -1
+        wipe: superblock
+
+      - id: luks-volume
+        type: dm_crypt
+        volume: luks-part
+        key: "your-encryption-passphrase"
+
+      - name: ubuntu-vg
+        type: lvm_volgroup
+        devices: [luks-volume]
+        preserve: false
+        id: lvm_volgroup-0
+
+
+      - name: ubuntu-lv
+        volgroup: lvm_volgroup-0
+        size: -1
+        preserve: false
+        type: lvm_partition
+        id: lvm_partition-1
+
+      - fstype: ext4
+        volume: lvm_partition-1
+        preserve: false
+        type: format
+        id: format-3
+    
+      - device: format-3
+        path: /
+        type: mount
+        id: mount-lvm
+
+      - device:  format-boot
+        path: /boot
+        type: mount
+        id: mount-boot
+    
+      - device: format-efi
+        path: /boot/efi
+        type: mount
+        id: mount-efi
+
+    
+     
+    late-commands:
+      - curtin in-target --target=/target -- bash -c 'echo "RESUME=UUID=$(blkid -s UUID -o value /dev/mapper/vg0-lv_swap)" > /etc/initramfs-tools/conf.d/resume'
+      - curtin in-target --target=/target -- update-initramfs -u

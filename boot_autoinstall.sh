@@ -12,7 +12,7 @@ OUT_ISO="${HOME}/vm/ubuntu-fde-hibernate/ubuntu-autoinstall-patched.iso"
 sudo cloud-init schema --config-file $AUTOINSTALL_DIR/user-data
 
 echo "create nocloud iso"
-cloud-localds --filesystem=iso $NOCLOUD_ISO $AUTOINSTALL_DIR/user-data $AUTOINSTALL_DIR/meta-data
+cloud-localds --filesystem=iso $NOCLOUD_ISO $AUTOINSTALL_DIR/user-data.yaml $AUTOINSTALL_DIR/meta-data
 
 
 TMPDIR="$(mktemp -d)"
