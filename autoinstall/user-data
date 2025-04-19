@@ -115,43 +115,52 @@ autoinstall:
 
 
 
-    # the | means a multi line block of text
-    # Run a literal, trace-enabled shell script block that exits on error: debug + strict mode heredoc
-    late-commands:
-      - |
-        curtin in-target --target=/target -- bash -xe <<'EOF'
-        echo "[*] Disabling network wait..."
-        systemctl mask systemd-networkd-wait-online.service
+  # the | means a multi line block of text
+  # Run a literal, trace-enabled shell script block that exits on error: debug + strict mode heredoc
+  late-commands:
+    - |
+      curtin in-target --target=/target -- bash -xe <<'EOF'
+      echo "[*] Disabling network wait..."
+      systemctl mask systemd-networkd-wait-online.service
+      systemctl disable systemd-networkd-wait-online.service
+      systemctl mask systemd-networkd-wait-online.service
+      systemctl disable network-online.target
 
-        echo "[*] Disabling cloud-init..."
-        echo -e "network:\n  config: disabled" > /etc/cloud/cloud.cfg.d/99-disable-network-wait.cfg
-        touch /etc/cloud/cloud-init.disabled
-        apt-get purge -y cloud-init
+      echo "[*] Disabling cloud-init..."
+      echo -e "network:\n  config: disabled" > /etc/cloud/cloud.cfg.d/99-disable-network-wait.cfg
+      touch /etc/cloud/cloud-init.disabled
+      apt-get purge -y cloud-init
 
-        echo "[*] Marking netplan interfaces optional..."
-        for f in /etc/netplan/*.yaml; do
-          sed -i "s/dhcp4: true/&\\n      optional: true/" "$f"
-        done
+      echo "[*] Marking netplan interfaces optional..."
+      for f in /etc/netplan/*.yaml; do
+        sed -i "s/dhcp4: true/&\\n      optional: true/" "$f"
+      done
 
-        echo "[*] Disabling systemd wait..."
-        mkdir -p /etc/systemd/system/systemd-networkd-wait-online.service.d
-        echo -e "[Service]\nExecStart=\nExecStart=/bin/true" > /etc/systemd/system/systemd-networkd-wait-online.service.d/override.conf
+      echo "[*] Disabling systemd wait..."
+      mkdir -p /etc/systemd/system/systemd-networkd-wait-online.service.d
+      echo -e "[Service]\nExecStart=\nExecStart=/bin/true" > /etc/systemd/system/systemd-networkd-wait-online.service.d/override.conf
 
-        echo "[*] Configuring hibernate resume..."
-        UUID=$(blkid -s UUID -o value /dev/mapper/vg0-lv_swap)
-        echo "RESUME=UUID=$UUID" > /etc/initramfs-tools/conf.d/resume
-        sed -i "s/^\(GRUB_CMDLINE_LINUX_DEFAULT=\".*\)\(\".*\)/\1 resume=UUID=$UUID\2/" /etc/default/grub
+      systemctl daemon-reexec
+      systemctl daemon-reload
 
-        echo "[*] Configuring serial console..."
-        sed -i "s/^\(GRUB_CMDLINE_LINUX=\".*\)\(\".*\)/\1 console=ttyS0,115200n8\2/" /etc/default/grub
-        sed -i "s/^#GRUB_TERMINAL=/GRUB_TERMINAL=serial/" /etc/default/grub
-        sed -i "s/^#GRUB_SERIAL_COMMAND=/GRUB_SERIAL_COMMAND=\"serial --speed=115200 --unit=0 --word=8 --parity=no --stop=1\"/" /etc/default/grub
-        systemctl enable serial-getty@ttyS0.service
+      echo "[*] Configuring hibernate resume..."
+      UUID=$(blkid -s UUID -o value /dev/mapper/vg0-lv_swap)
+      echo "RESUME=UUID=$UUID" > /etc/initramfs-tools/conf.d/resume
+      sed -i "s/^GRUB_CMDLINE_LINUX_DEFAULT=.*/GRUB_CMDLINE_LINUX_DEFAULT=\"console=ttyS0  earlyprintk=ttyS0  cloud-init=disabled resume=UUID=$UUID\"/" /etc/default/grub
 
-        echo "[*] Updating grub and initramfs..."
-        update-grub
-        update-initramfs -u
+      echo "[*] Configuring serial console..."
+      grep -q "^GRUB_TERMINAL=" /etc/default/grub || echo 'GRUB_TERMINAL=serial' >> /etc/default/grub
+      grep -q "^GRUB_SERIAL_COMMAND=" /etc/default/grub || echo 'GRUB_SERIAL_COMMAND="serial --speed=115200 --unit=0 --word=8 --parity=no --stop=1"' >> /etc/default/grub
+      systemctl enable serial-getty@ttyS0.service
 
-        echo "[*] Done — exiting early."
-        exit 1
-        EOF
+      echo "[*] Updating grub and initramfs..."
+      update-grub
+      update-initramfs -u
+
+      echo " GRUB ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++"
+      logger -t grub -- "$(cat /etc/default/grub)"
+      echo " GRUB ------------------------------------------------------------"
+
+      echo "[*] Done — exiting early."
+      exit 1
+      EOF

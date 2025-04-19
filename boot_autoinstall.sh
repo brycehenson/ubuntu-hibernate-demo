@@ -68,7 +68,7 @@ cat $GRUB_CFG > working/before_changes_grub.cfg
 # setup the system to use the serial terminal
 # setup autoinstall note that we have to escape the semicolon
 sudo sed -i 's|---| console=ttyS0 earlyprintk=ttyS0  autoinstall  ds=nocloud\;d=/dev/sr1 ---|' "$GRUB_CFG"
-sudo sed -i 's/^set timeout=.*/set timeout=2/' "$GRUB_CFG"
+sudo sed -i 's/^set timeout=.*/set timeout=1/' "$GRUB_CFG"
 cat $GRUB_CFG > working/after_changes_grub.cfg
 
 
@@ -77,7 +77,7 @@ GRUB_CFG="$WORKDIR/boot/grub/loopback.cfg"
 cat $GRUB_CFG > working/before_changes_loopback.cfg
 # here change the grub config
 sudo sed -i 's|---| console=ttyS0 earlyprintk=ttyS0  autoinstall ds=nocloud\;d=/dev/sr1  ---|' "$GRUB_CFG"
-sudo sed -i 's/^set timeout=.*/set timeout=2/' "$GRUB_CFG"
+sudo sed -i 's/^set timeout=.*/set timeout=1/' "$GRUB_CFG"
 cat $GRUB_CFG > working/after_changes_loopback.cfg
 
 
