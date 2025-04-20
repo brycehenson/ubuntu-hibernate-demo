@@ -3,57 +3,118 @@ set -euo pipefail
 
 
 DISK_IMG="${HOME}/vm/ubuntu-fde-hibernate/vm-disk.qcow2"
+SESSION="vmconsole"
+WINDOW="1"
+PANE="${SESSION}:1"
 
-SOCK=$(mktemp -u /tmp/qemu-serial-XXXXXX.sock)
+
+
+TMPDIR="$(mktemp -d)"
+CLOUDISO="${TMPDIR}/cloud.iso"
+
 
 QEMU_PID=""
 cleanup() {
   echo "[*] Cleaning up…"
-  if [[ -n "$QEMU_PID" ]] then
-    echo "[*] Killing QEMU (pid $QEMU_PID)"
-    kill "$QEMU_PID"
-    wait "$QEMU_PID" 2>/dev/null || true
-  fi
-  rm -f "$SOCK"
+  tmux kill-session -t "$SESSION" 2>/dev/null || true
+   sudo rm -rf "$TMPDIR"
 }
 trap cleanup EXIT
 
-echo "[*] Using socket: $SOCK"
-
-# 3) Start QEMU in background,
-qemu-system-x86_64 \
-  -m 2048 \
-  -enable-kvm \
-  -drive file="$DISK_IMG",format=qcow2 \
-  -chardev socket,path=$SOCK,server=on,wait=on,id=serial0 \
-  -serial chardev:serial0 \
-  -nographic \
-  -monitor unix:/tmp/qemu-monitor.sock,server,nowait \
-    > /tmp/qemu.out 2>&1 &
-
-QEMU_PID=$!
-
-echo "after qemu"
 
 
-# Step 1: Create a virtual serial cable
-socat PTY,link=/tmp/term1,raw,echo=0 PTY,link=/tmp/term2,raw,echo=0 &
-SOCAT_PTY_PID=$!
+# setup a cloud-config iso file
+xorriso -as mkisofs \
+  -r -J -joliet-long \
+  -V CIDATA \
+  -o "$CLOUDISO" \
+  cloud_config/
 
-echo "after socat 2"
-# 4) In this (original) terminal, wait then attach via socat
-echo "[Primary] waiting for socket to appear..."
-until [ -S "$SOCK" ] ; do sleep 0.1; echo "waiting"; date; done
 
-# Step 2: Bridge one end to the backend socket
-socat UNIX-CONNECT:$SOCK /tmp/term1,raw,echo=0 &
-SOCAT_PTY_PID2=$!
 
-# 1) Launch GNOME Terminal to monitor serial (Terminal 2)
-gnome-terminal -- bash -c "
-  echo '[*] Connecting to PTY...';
-  exec socat -,raw,echo=0 /tmp/term2
-" & disown
+# Kill any old session so new-session can succeed
+tmux kill-session -t "$SESSION" 2>/dev/null || true
 
-echo "[Primary] socket up — attaching console..."
-socat -,raw,echo=0,ignoreeof,escape=0x1C /tmp/term2
+
+# 1) Create tmux session running QEMU
+tmux new-session -d \
+  -s "$SESSION" \
+  -n "$WINDOW" \
+  "qemu-system-x86_64 -m 2048 -enable-kvm \
+  -drive file=$DISK_IMG,format=qcow2 \
+  -drive file="$CLOUDISO",media=cdrom,index=1 \
+  -serial mon:stdio \
+  -nographic
+  "
+
+
+time_vm_start=$(date +%s)
+
+# Debug: verify session & window exist
+tmux list-sessions
+tmux list-windows -t "$SESSION"
+
+# 2) Optionally attach in another terminal
+gnome-terminal -- tmux attach-session -t "$SESSION" & disown
+
+sleep 1
+
+# 3) Watch & interact
+# inject disk enc passphrase
+echo "[Primary] watching tmux pane $PANE"
+while true; do
+  OUTPUT=$(tmux capture-pane  -p -S -10 -t "$PANE")
+  # echo "$OUTPUT"
+  if echo "$OUTPUT" | grep -qiF 'Please unlock disk luks-volume:'; then
+    now=$(date +%s)
+    echo "[*] sending passphrase +$((now - time_vm_start)) seconds"
+    tmux send-keys -t "$PANE" "pass" Enter
+    break
+  fi
+  sleep 1
+done
+
+# user login
+# user login
+echo "[Primary] watching tmux pane $PANE"
+while true; do
+  OUTPUT=$(tmux capture-pane  -p -S -20 -t "$PANE")
+  # echo "$OUTPUT"
+  if echo "$OUTPUT" | grep -qiF 'login:'; then
+    sleep 1
+    now=$(date +%s)
+    echo "[*] sending login +$((now - time_vm_start)) seconds"
+    tmux send-keys -t "$PANE" "ubuntu" Enter
+    sleep 0.5
+    tmux send-keys -t "$PANE" "pass" Enter
+    sleep 0.5
+    break
+  fi
+  sleep 5
+done
+
+
+sleep 3
+echo "looking for GRUB_CMDLINE_LINUX_DEFAULT"
+tmux send-keys -t "$PANE" "cat /etc/default/grub " Enter
+sleep 0.5
+# capture the pane output
+OUTPUT=$(tmux capture-pane -p -t "$PANE")
+
+# test for the line but don’t let grep’s exit kill the script
+if echo "$OUTPUT" | grep -q "GRUB_CMDLINE_LINUX_DEFAULT="; then
+  if ! echo "$OUTPUT" | grep -q "resume="; then
+    echo "WARNING: resume= not found in kernel parameters"
+    echo "  $DEFAULT_LINE"
+  fi
+else
+  echo "ERROR: could not find GRUB_CMDLINE_LINUX_DEFAULT line"
+fi
+
+
+read -p "Press ENTER to shutdown..."
+
+tmux send-keys -t "$PANE" "shutdown now " Enter
+
+
+sleep 5

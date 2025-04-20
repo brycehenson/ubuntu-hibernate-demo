@@ -1,0 +1,5 @@
+instance-id: ubuntu-fde-hibernate
+local-hostname: ubuntu-autoinstall
+network:
+  version: 2
+  config: []
