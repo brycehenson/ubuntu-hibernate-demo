@@ -22,6 +22,7 @@ cleanup() {
 trap cleanup EXIT
 
 
+sudo cloud-init schema --config-file cloud_config/user-data
 
 # setup a cloud-config iso file
 xorriso -as mkisofs \
@@ -35,6 +36,7 @@ xorriso -as mkisofs \
 # Kill any old session so new-session can succeed
 tmux kill-session -t "$SESSION" 2>/dev/null || true
 
+#  -drive file="$CLOUDISO",media=cdrom,index=1 \
 
 # 1) Create tmux session running QEMU
 tmux new-session -d \
@@ -42,7 +44,6 @@ tmux new-session -d \
   -n "$WINDOW" \
   "qemu-system-x86_64 -m 2048 -enable-kvm \
   -drive file=$DISK_IMG,format=qcow2 \
-  -drive file="$CLOUDISO",media=cdrom,index=1 \
   -serial mon:stdio \
   -nographic
   "
@@ -99,17 +100,25 @@ echo "looking for GRUB_CMDLINE_LINUX_DEFAULT"
 tmux send-keys -t "$PANE" "cat /etc/default/grub " Enter
 sleep 0.5
 # capture the pane output
-OUTPUT=$(tmux capture-pane -p -t "$PANE")
+OUTPUT=$(tmux capture-pane -p -S -200 -t "$PANE")
 
 # test for the line but don’t let grep’s exit kill the script
 if echo "$OUTPUT" | grep -q "GRUB_CMDLINE_LINUX_DEFAULT="; then
-  if ! echo "$OUTPUT" | grep -q "resume="; then
+  # 1) capture the exact line into DEFAULT_LINE
+  DEFAULT_LINE=$(printf '%s\n' "$OUTPUT" | grep "GRUB_CMDLINE_LINUX_DEFAULT=")
+  # 2) print that line
+  echo "Found kernel cmdline: $DEFAULT_LINE"
+  # 3) check if it contains 'resume='
+  if [[ "$DEFAULT_LINE" == *resume=* ]]; then
+    echo "OK: resume= is present in kernel parameters"
+  else
     echo "WARNING: resume= not found in kernel parameters"
-    echo "  $DEFAULT_LINE"
   fi
+
 else
   echo "ERROR: could not find GRUB_CMDLINE_LINUX_DEFAULT line"
 fi
+
 
 
 read -p "Press ENTER to shutdown..."

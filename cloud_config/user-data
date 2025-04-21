@@ -1,0 +1,58 @@
+#cloud-config
+users:
+  - name: ubuntu
+    groups: users, admin
+    sudo: ALL=(ALL) NOPASSWD:ALL
+    passwd: $6$pQBjjcoCGHYvtUTS$3pBKrm7luA/wnUlM/C/5Ih8peWJ2J6MM.uZ9sDXR0iFzL4fI5PESXD.XW5Ql3.LO.VwaqwE3JhQBTINqaMuie/
+
+    # echo "[*] Marking netplan interfaces optional..."
+    # for f in /etc/netplan/*.yaml; do
+    #   sed -i "s/dhcp4: true/&\n      optional: true/" "$f"
+    # done
+write_files:
+  - path: /usr/local/bin/setup-hibernate.sh
+    permissions: '0755'
+    content: |
+      #!/bin/bash
+      set -eux
+
+      echo "[*] Disabling network wait..."
+      systemctl mask systemd-networkd-wait-online.service
+      systemctl disable systemd-networkd-wait-online.service
+      systemctl disable network-online.target
+
+      echo "[*] Disabling cloud-init..."
+      echo -e "network:\n  config: disabled" > /etc/cloud/cloud.cfg.d/99-disable-network-wait.cfg
+      touch /etc/cloud/cloud-init.disabled
+      apt-get purge -y cloud-init
+
+      echo "[*] Disabling systemd wait..."
+      mkdir -p /etc/systemd/system/systemd-networkd-wait-online.service.d
+      echo -e "[Service]\nExecStart=\nExecStart=/bin/true" > /etc/systemd/system/systemd-networkd-wait-online.service.d/override.conf
+
+      systemctl daemon-reexec
+      systemctl daemon-reload
+
+      echo "[*] Configuring hibernate resume..."
+      UUID=$(blkid -s UUID -o value /dev/mapper/vg0-lv_swap)
+      echo "RESUME=UUID=$UUID" > /etc/initramfs-tools/conf.d/resume
+      sed -i "s|^GRUB_CMDLINE_LINUX_DEFAULT=.*|GRUB_CMDLINE_LINUX_DEFAULT=\"console=ttyS0 earlyprintk=ttyS0 cloud-init=disabled resume=UUID=$UUID\"|" /etc/default/grub
+
+      echo "[*] Configuring serial console..."
+      grep -q "^GRUB_TERMINAL=" /etc/default/grub || echo 'GRUB_TERMINAL=serial' >> /etc/default/grub
+      grep -q "^GRUB_SERIAL_COMMAND=" /etc/default/grub || echo 'GRUB_SERIAL_COMMAND=\"serial --speed=115200 --unit=0 --word=8 --parity=no --stop=1\"' >> /etc/default/grub
+      systemctl enable serial-getty@ttyS0.service
+
+      echo "[*] Updating grub and initramfs..."
+      update-grub
+      update-initramfs -u
+
+      echo " GRUB ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++"
+      logger -t grub -- "$(cat /etc/default/grub)"
+      echo " GRUB ------------------------------------------------------------"
+
+      echo "[*] Done — exiting early."
+      exit 0
+
+runcmd:
+  - [ bash, /usr/local/bin/setup-hibernate.sh ]
