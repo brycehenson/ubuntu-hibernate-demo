@@ -1,9 +1,9 @@
-# ubuntu fde with hibernate
+# Ubuntu full disk encryption with hibernate
 This is a demo of installing Ubuntu with full disk encryption (FDE) and **working hibernation** in a virtual machine.
 While several online resources suggest that FDE with hibernation is possible, I was never able to get it working reliably. This project provides a CI-like set of scripts that fully automates the process of configuring a VM with FDE+hibernation.
 
 Steps:
-- Patch the iso to add autoinstall flags
+- Patch the install iso to add autoinstall flags to grub
 - Boot and run the install
 - For the remaining boots we run VM in tmux, this allows us to inject the FDE paraphrase and login.
 - First boot for cloud-init configuration
