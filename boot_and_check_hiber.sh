@@ -32,15 +32,6 @@ cleanup() {
 }
 trap cleanup EXIT
 
-# TODO: duplicate step as this is set up in the install step
-# Validate cloud-init config
-sudo cloud-init schema --config-file cloud_config/user-data
-# setup a cloud-config iso file
-xorriso -as mkisofs \
-  -r -J -joliet-long \
-  -V CIDATA \
-  -o "$CLOUDISO" \
-  cloud_config/
 
 
 # Start tmux session with QEMU
@@ -224,6 +215,6 @@ OUTPUT=$(tmux capture-pane -p -S -200 -t "$PANE")
 if echo "$OUTPUT" | grep -q "magic-suspend-token645632"; then
   echo "found magic-suspend-token hibernation is WORKING !!!"
 else
-  echo "ERROR: could not find magic-suspend-token hibernation is not working"
+  echo "ERROR: could not find magic-suspend-token hibernation is NOT working"
   read -p "Press ENTER to exit"
 fi
