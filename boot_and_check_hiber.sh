@@ -222,7 +222,7 @@ sleep 0.5
 OUTPUT=$(tmux capture-pane -p -S -200 -t "$PANE")
 # test for the line but don’t let grep’s exit kill the script
 if echo "$OUTPUT" | grep -q "magic-suspend-token645632"; then
-  echo "found find magic-suspend-token hibernation is WORKING !!!"
+  echo "found magic-suspend-token hibernation is WORKING !!!"
 else
   echo "ERROR: could not find magic-suspend-token hibernation is not working"
   read -p "Press ENTER to exit"
