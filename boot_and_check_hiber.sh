@@ -209,10 +209,7 @@ time_vm_start=$(date +%s)
 
 wait_for_prompt_and_send "Please unlock disk luks-volume:" "$PASSPHRASE"
 
-# Perform user login
-wait_for_prompt_and_send "login:" "$USERNAME"
-wait_for_prompt_and_send "Password:" "$PASSWORD"
-
+# no login needed here will come back to the same place we left it
 
 echo "looking for magic-suspend-token"
 tmux send-keys -t "$PANE" "cat /dev/shm/hibernation_check " Enter
