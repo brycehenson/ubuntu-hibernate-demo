@@ -10,8 +10,6 @@ OUT_ISO="/home/bryce/vm/ubuntu-fde-hibernate/ubuntu-autoinstall-patched.iso"
 
 
 
-
-
 sudo cloud-init schema --config-file $AUTOINSTALL_DIR/user-data
 
 echo "create nocloud iso"

@@ -17,7 +17,7 @@ Steps:
 # Requirements
 
 ```
-sudo apt install cloud-image-utils tmux
+sudo apt install cloud-image-utils tmux qemu-utils
 ```
 
 # Run
