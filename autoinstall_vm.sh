@@ -3,10 +3,12 @@ set -euo pipefail
 
 ISO_URL="https://releases.ubuntu.com/noble/ubuntu-24.04.2-live-server-amd64.iso"
 AUTOINSTALL_DIR="autoinstall"
-ISO_PATH="${HOME}/Downloads/ubuntu-24.04.2-live-server-amd64.iso"
+ISO_PATH="/home/bryce/Downloads/ubuntu-24.04.2-live-server-amd64.iso"
 NOCLOUD_ISO="working/nocloud.iso"
-DISK_IMG="${HOME}/vm/ubuntu-fde-hibernate/vm-disk.qcow2"
-OUT_ISO="${HOME}/vm/ubuntu-fde-hibernate/ubuntu-autoinstall-patched.iso"
+DISK_IMG="/home/bryce/vm/ubuntu-fde-hibernate/vm-disk.qcow2"
+OUT_ISO="/home/bryce/vm/ubuntu-fde-hibernate/ubuntu-autoinstall-patched.iso"
+
+
 
 
 
@@ -29,6 +31,8 @@ if [ -f "$DISK_IMG" ]; then
   rm -f "$DISK_IMG"
 fi
 qemu-img create -f qcow2 $DISK_IMG 20G
+
+chmod a+rw $DISK_IMG
 
 
 TMPDIR="$(mktemp -d)"

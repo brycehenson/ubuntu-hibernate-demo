@@ -119,6 +119,12 @@ autoinstall:
   - curtin in-target --target=/target -- sed -i 's|^GRUB_CMDLINE_LINUX_DEFAULT=.*|GRUB_CMDLINE_LINUX_DEFAULT="console=ttyS0 earlyprintk=ttyS0 network-config=disabled"|g' /etc/default/grub
   # (C) Then rebuild grub in the target:
   - curtin in-target --target=/target -- update-grub
+  # Trying to prevent the 120s wait on first boot from systemd-networkd-wait-online
+  # Mask the wait-online service to prevent it from delaying boot
+  - curtin in-target --target=/target -- systemctl mask systemd-networkd-wait-online.service
+  # Create a drop-in override to neutralize the wait-online behavior
+  - curtin in-target --target=/target -- mkdir -p /etc/systemd/system/systemd-networkd-wait-online.service.d
+  - curtin in-target --target=/target -- bash -c "echo -e '[Service]\nExecStart=\nExecStart=/lib/systemd/systemd-networkd-wait-online --any' > /etc/systemd/system/systemd-networkd-wait-online.service.d/override.conf"
 
 
   user-data:
@@ -141,14 +147,9 @@ autoinstall:
           systemctl disable systemd-networkd-wait-online.service
           systemctl disable network-online.target
 
-          echo "[*] Disabling cloud-init..."
-          echo -e "network:\n  config: disabled" > /etc/cloud/cloud.cfg.d/99-disable-network-wait.cfg
-          touch /etc/cloud/cloud-init.disabled
-          apt-get purge -y cloud-init
-
           # echo "[*] Marking netplan interfaces optional..."
           # for f in /etc/netplan/*.yaml; do
-          #   sed -i "s/dhcp4: true/&\n      optional: true/" "$f"
+          #   sed -i "s/dhScp4: true/&\n      optional: true/" "$f"
           # done
 
           echo "[*] Disabling systemd wait..."
@@ -158,14 +159,20 @@ autoinstall:
           systemctl daemon-reexec
           systemctl daemon-reload
 
+          echo "setup the swap partition"
+          mkswap /dev/mapper/vg0-lv_swap
+          swapon /dev/mapper/vg0-lv_swap
+
           echo "[*] Configuring hibernate resume..."
           UUID=$(blkid -s UUID -o value /dev/mapper/vg0-lv_swap)
+          echo "UUID=$UUID none swap sw 0 0" >> /etc/fstab
           echo "RESUME=UUID=$UUID" > /etc/initramfs-tools/conf.d/resume
           sed -i "s|^GRUB_CMDLINE_LINUX_DEFAULT=.*|GRUB_CMDLINE_LINUX_DEFAULT=\"console=ttyS0 earlyprintk=ttyS0 cloud-init=disabled resume=UUID=$UUID\"|" /etc/default/grub
+          sudo sed -i 's/^set timeout=.*/set timeout=1/' /etc/default/grub
 
           echo "[*] Configuring serial console..."
           grep -q "^GRUB_TERMINAL=" /etc/default/grub || echo 'GRUB_TERMINAL=serial' >> /etc/default/grub
-          grep -q "^GRUB_SERIAL_COMMAND=" /etc/default/grub || echo 'GRUB_SERIAL_COMMAND=\"serial --speed=115200 --unit=0 --word=8 --parity=no --stop=1\"' >> /etc/default/grub
+          #grep -q "^GRUB_SERIAL_COMMAND=" /etc/default/grub || echo 'GRUB_SERIAL_COMMAND="serial --speed=115200 --unit=0 --word=8 --parity=no --stop=1"' >> /etc/default/grub
           systemctl enable serial-getty@ttyS0.service
 
           echo "[*] Updating grub and initramfs..."
