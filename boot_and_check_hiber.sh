@@ -123,7 +123,7 @@ wait_for_ready
 # follow the cloud init log and wait for the finished line
 tmux send-keys -t "$PANE" "tail -f /var/log/cloud-init-output.log" Enter
 # when finished exit the tail
-wait_for_prompt_and_send "^Cloud-init v\..* finished at .*$" "q"
+wait_for_prompt_and_send "Cloud-init v\..* finished at .*" "q" 50
 # exit the tail -f
 tmux send-keys -t "$PANE" C-c
 
@@ -209,7 +209,11 @@ time_vm_start=$(date +%s)
 
 wait_for_prompt_and_send "Please unlock disk luks-volume:" "$PASSPHRASE"
 
+sleep 10
+
 # no login needed here will come back to the same place we left it
+tmux send-keys -t "$PANE" Enter
+wait_for_ready
 
 echo "looking for magic-suspend-token"
 tmux send-keys -t "$PANE" "cat /dev/shm/hibernation_check " Enter
@@ -221,4 +225,5 @@ if echo "$OUTPUT" | grep -q "magic-suspend-token645632"; then
   echo "found find magic-suspend-token hibernation is WORKING !!!"
 else
   echo "ERROR: could not find magic-suspend-token hibernation is not working"
+  read -p "Press ENTER to exit"
 fi
