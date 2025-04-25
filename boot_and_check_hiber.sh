@@ -201,36 +201,8 @@ qemu-system-x86_64 \\
 time_vm_start=$(date +%s)
 
 
+wait_for_prompt_and_send "Please unlock disk luks-volume:" "$PASSPHRASE"
 
-# 3) Watch & interact
-# inject disk enc passphrase
-echo "[Primary] watching tmux pane $PANE"
-while true; do
-  OUTPUT=$(tmux capture-pane  -p -S -10 -t "$PANE")
-  # echo "$OUTPUT"
-  if echo "$OUTPUT" | grep -qiF 'Please unlock disk luks-volume:'; then
-    now=$(date +%s)
-    echo "[*] sending passphrase +$((now - time_vm_start)) seconds"
-    tmux send-keys -t "$PANE" "pass" Enter
-    break
-  fi
-  sleep 1
-done
-
-# user login
-echo "[Primary] watching tmux pane $PANE"
-while true; do
-  OUTPUT=$(tmux capture-pane  -p -S -20 -t "$PANE")
-  # echo "$OUTPUT"
-  if echo "$OUTPUT" | grep -qiF 'login:'; then
-    sleep 1
-    now=$(date +%s)
-    echo "[*] sending login +$((now - time_vm_start)) seconds"
-    tmux send-keys -t "$PANE" "ubuntu" Enter
-    sleep 0.5
-    tmux send-keys -t "$PANE" "pass" Enter
-    sleep 0.5
-    break
-  fi
-  sleep 5
-done
+# Perform user login
+wait_for_prompt_and_send "login:" "$USERNAME"
+wait_for_prompt_and_send "Password:" "$PASSWORD"
