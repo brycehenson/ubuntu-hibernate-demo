@@ -29,5 +29,4 @@ sudo apt install cloud-image-utils tmux qemu-utils
 
 # TODO
 - [x] no wait for network on first boot
-- [ ] Clean up boot and check script
-  - [  ] split out
+- [x] Clean up boot and check script
