@@ -149,8 +149,8 @@ else
 fi
 
 
-sleep 5
-read -p "Press ENTER to reboot..."
+wait_for_ready
+# read -p "Press ENTER to reboot..."
 
 # # reboot
 # echo "rebooting"
@@ -175,20 +175,17 @@ sleep 0.5
 
 
 # TODO: send command to store something that will persist on hibernate but not reboot
+tmux send-keys -t "$PANE" "echo 'magic-suspend-token' > /dev/shm/hibernation_check" Enter
 
 # optional wait for enter
 # read -p "Press ENTER to hibernate..."
 
 tmux send-keys -t "$PANE" "sudo systemctl hibernate" Enter
 
-
-#TODO instead of sleep check that the previous command has exited
-sleep 40
-
+$ the qemu command should exit
+wait_for_ready
 
 # Now launch another VM instance
-
-
 tmux send-keys -t "$SESSION:$WINDOW" "
 qemu-system-x86_64 \\
   -m 2048 \\
@@ -206,3 +203,16 @@ wait_for_prompt_and_send "Please unlock disk luks-volume:" "$PASSPHRASE"
 # Perform user login
 wait_for_prompt_and_send "login:" "$USERNAME"
 wait_for_prompt_and_send "Password:" "$PASSWORD"
+
+
+echo "looking for magic-suspend-token"
+tmux send-keys -t "$PANE" "cat /dev/shm/hibernation_check " Enter
+sleep 0.5
+# capture the pane output
+OUTPUT=$(tmux capture-pane -p -S -200 -t "$PANE")
+# test for the line but don’t let grep’s exit kill the script
+if echo "$OUTPUT" | grep -q "magic-suspend-token"; then
+  echo "found find magic-suspend-token"
+else
+  echo "ERROR: could not find magic-suspend-token"
+fi
