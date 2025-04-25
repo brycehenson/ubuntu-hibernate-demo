@@ -168,7 +168,7 @@ autoinstall:
           echo "UUID=$UUID none swap sw 0 0" >> /etc/fstab
           echo "RESUME=UUID=$UUID" > /etc/initramfs-tools/conf.d/resume
           sed -i "s|^GRUB_CMDLINE_LINUX_DEFAULT=.*|GRUB_CMDLINE_LINUX_DEFAULT=\"console=ttyS0 earlyprintk=ttyS0 cloud-init=disabled resume=UUID=$UUID\"|" /etc/default/grub
-          sudo sed -i 's/^set timeout=.*/set timeout=1/' /etc/default/grub
+          sed -i 's/^set GRUB_TIMEOUT=.*/set GRUB_TIMEOUT=1/' /etc/default/grub
 
           echo "[*] Configuring serial console..."
           grep -q "^GRUB_TERMINAL=" /etc/default/grub || echo 'GRUB_TERMINAL=serial' >> /etc/default/grub

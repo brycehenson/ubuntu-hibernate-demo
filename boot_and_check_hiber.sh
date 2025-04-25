@@ -51,6 +51,8 @@ tmux new-session -d \
   -s "$SESSION" \
   -n "$WINDOW" \
   "qemu-system-x86_64 -m 2048 -enable-kvm \
+  -cpu host \
+  -smp 12 \
   -drive file=$DISK_IMG,format=qcow2 \
   -serial mon:stdio \
   -nographic; exec bash"
@@ -106,6 +108,7 @@ wait_for_ready() {
   done
 }
 
+echo "first boot for cloud-init config"
 
 # Inject disk encryption passphrase
 wait_for_prompt_and_send "Please unlock disk luks-volume:" "$PASSPHRASE"
@@ -153,7 +156,7 @@ wait_for_ready
 # read -p "Press ENTER to reboot..."
 
 # # reboot
-# echo "rebooting"
+echo "rebooting to test hibernate"
 tmux send-keys -t "$PANE" "sudo reboot now" Enter
 
 # watch boot and pass paraphrase
@@ -175,14 +178,18 @@ sleep 0.5
 
 
 # TODO: send command to store something that will persist on hibernate but not reboot
-tmux send-keys -t "$PANE" "echo 'magic-suspend-token' > /dev/shm/hibernation_check" Enter
+tmux send-keys -t "$PANE" "echo 'magic-suspend-token645632' > /dev/shm/hibernation_check" Enter
 
 # optional wait for enter
-# read -p "Press ENTER to hibernate..."
-
 tmux send-keys -t "$PANE" "sudo systemctl hibernate" Enter
 
-$ the qemu command should exit
+
+
+# TODO: how to check we are back at the host properly ??
+sleep 20
+# read -p "Press ENTER when qemu is done..."
+
+#
 wait_for_ready
 
 # Now launch another VM instance
@@ -190,6 +197,8 @@ tmux send-keys -t "$SESSION:$WINDOW" "
 qemu-system-x86_64 \\
   -m 2048 \\
   -enable-kvm \\
+  -cpu host \\
+  -smp 12 \\
   -drive file=$DISK_IMG,format=qcow2 \\
   -serial mon:stdio \\
   -nographic
@@ -211,8 +220,8 @@ sleep 0.5
 # capture the pane output
 OUTPUT=$(tmux capture-pane -p -S -200 -t "$PANE")
 # test for the line but don’t let grep’s exit kill the script
-if echo "$OUTPUT" | grep -q "magic-suspend-token"; then
-  echo "found find magic-suspend-token"
+if echo "$OUTPUT" | grep -q "magic-suspend-token645632"; then
+  echo "found find magic-suspend-token hibernation is WORKING !!!"
 else
-  echo "ERROR: could not find magic-suspend-token"
+  echo "ERROR: could not find magic-suspend-token hibernation is not working"
 fi
