@@ -11,10 +11,10 @@ set -euo pipefail
 #   - login
 #   - write something to a temp file that is kept in memory (persistent over hibernate but not reboot)
 #   - hibernate
+# - resume from hibernate
+#   - check that the file we wrote is still there
 
-
-
-DISK_IMG="/home/bryce/vm/ubuntu-fde-hibernate/vm-disk.qcow2"
+DISK_IMG="/home/bryce/vm/ubuntu-for-thinkpad/vm-disk.qcow2"
 SESSION="vmconsole"
 WINDOW="1"
 PANE="${SESSION}:${WINDOW}"
@@ -23,6 +23,50 @@ USERNAME="ubuntu"
 PASSWORD="pass"
 TMPDIR="$(mktemp -d)"
 CLOUDISO="${TMPDIR}/cloud.iso"
+
+# Resolve OVMF firmware for UEFI boot; allow overrides via env vars
+DEFAULT_OVMF_CODE=(/usr/share/OVMF/OVMF_CODE.fd /usr/share/OVMF/OVMF_CODE_4M.fd)
+DEFAULT_OVMF_VARS=(/usr/share/OVMF/OVMF_VARS.fd /usr/share/OVMF/OVMF_VARS_4M.fd)
+
+if [[ -z "${OVMF_CODE:-}" ]]; then
+  for candidate in "${DEFAULT_OVMF_CODE[@]}"; do
+    if [[ -r "$candidate" ]]; then
+      OVMF_CODE="$candidate"
+      break
+    fi
+  done
+fi
+
+if [[ -z "${OVMF_VARS_TEMPLATE:-}" ]]; then
+  for candidate in "${DEFAULT_OVMF_VARS[@]}"; do
+    if [[ -r "$candidate" ]]; then
+      OVMF_VARS_TEMPLATE="$candidate"
+      break
+    fi
+  done
+fi
+
+if [[ -z "${OVMF_CODE:-}" ]] || [[ ! -r "$OVMF_CODE" ]]; then
+  cat <<EOF >&2
+[!] OVMF_CODE firmware missing or unreadable at: ${OVMF_CODE:-<unset>}
+    Checked candidates: ${DEFAULT_OVMF_CODE[*]}
+    Install 'ovmf' (e.g. sudo apt install ovmf) or set OVMF_CODE to the correct file.
+EOF
+  exit 1
+fi
+
+if [[ -z "${OVMF_VARS_TEMPLATE:-}" ]] || [[ ! -r "$OVMF_VARS_TEMPLATE" ]]; then
+  cat <<EOF >&2
+[!] OVMF_VARS_TEMPLATE missing or unreadable at: ${OVMF_VARS_TEMPLATE:-<unset>}
+    Checked candidates: ${DEFAULT_OVMF_VARS[*]}
+    Install 'ovmf' or set OVMF_VARS_TEMPLATE to the matching vars image.
+EOF
+  exit 1
+fi
+
+OVMF_VARS="${TMPDIR}/OVMF_VARS.fd"
+cp "$OVMF_VARS_TEMPLATE" "$OVMF_VARS"
+chmod u+rw,go-rwx "$OVMF_VARS"
 
 
 cleanup() {
@@ -38,15 +82,22 @@ trap cleanup EXIT
 # Kill any old session so new-session can succeed
 tmux kill-session -t "$SESSION" 2>/dev/null || true
 # Create a new detached tmux session
+# have qemu boot using uefi
 tmux new-session -d \
   -s "$SESSION" \
   -n "$WINDOW" \
-  "qemu-system-x86_64 -m 2048 -enable-kvm \
-  -cpu host \
-  -smp 12 \
-  -drive file=$DISK_IMG,format=qcow2 \
-  -serial mon:stdio \
-  -nographic; exec bash"
+  "qemu-system-x86_64 \
+    -machine q35,accel=kvm \
+    -m 2048 \
+    -cpu host \
+    -smp 12 \
+    -enable-kvm \
+    -drive if=pflash,format=raw,readonly=on,file=$OVMF_CODE \
+    -drive if=pflash,format=raw,file=$OVMF_VARS \
+    -drive file=$DISK_IMG,format=qcow2,if=virtio \
+    -serial mon:stdio \
+    -nic user,model=virtio,mac=52:54:00:f6:2c:43 \
+    -nographic; exec bash"
 
 time_vm_start=$(date +%s)
 
@@ -102,7 +153,7 @@ wait_for_ready() {
 echo "first boot for cloud-init config"
 
 # Inject disk encryption passphrase
-wait_for_prompt_and_send "Please unlock disk luks-volume:" "$PASSPHRASE"
+wait_for_prompt_and_send "unlock disk luks-volume:" "$PASSPHRASE"
 
 # Perform user login
 wait_for_prompt_and_send "login:" "$USERNAME"
@@ -112,7 +163,7 @@ wait_for_ready
 
 
 # follow the cloud init log and wait for the finished line
-tmux send-keys -t "$PANE" "tail -f /var/log/cloud-init-output.log" Enter
+tmux send-keys -t "$PANE" "watch -n 1 'grep \"finished\" /var/log/cloud-init-output.log'" Enter
 # when finished exit the tail
 wait_for_prompt_and_send "Cloud-init v\..* finished at .*" "q" 50
 # exit the tail -f
@@ -147,11 +198,11 @@ wait_for_ready
 # read -p "Press ENTER to reboot..."
 
 # # reboot
-echo "rebooting to test hibernate"
+echo "rebooting"
 tmux send-keys -t "$PANE" "sudo reboot now" Enter
 
 # watch boot and pass paraphrase
-wait_for_prompt_and_send "Please unlock disk luks-volume:" "$PASSPHRASE"
+wait_for_prompt_and_send "unlock disk luks-volume:" "$PASSPHRASE"
 
 # Perform user login
 wait_for_prompt_and_send "login:" "$USERNAME"
@@ -168,7 +219,7 @@ tmux send-keys -t "$PANE" "grep resume /proc/cmdline " Enter
 sleep 0.5
 
 
-# TODO: send command to store something that will persist on hibernate but not reboot
+# store something that will persist on hibernate but not reboot
 tmux send-keys -t "$PANE" "echo 'magic-suspend-token645632' > /dev/shm/hibernation_check" Enter
 
 # optional wait for enter
@@ -186,19 +237,23 @@ wait_for_ready
 # Now launch another VM instance
 tmux send-keys -t "$SESSION:$WINDOW" "
 qemu-system-x86_64 \\
+  -machine q35,accel=kvm \\
   -m 2048 \\
-  -enable-kvm \\
   -cpu host \\
   -smp 12 \\
-  -drive file=$DISK_IMG,format=qcow2 \\
+  -enable-kvm \\
+  -drive if=pflash,format=raw,readonly=on,file=$OVMF_CODE \\
+  -drive if=pflash,format=raw,file=$OVMF_VARS \\
+  -drive file=$DISK_IMG,format=qcow2,if=virtio \\
   -serial mon:stdio \\
+  -nic user,model=virtio,mac=52:54:00:f6:2c:43 \\
   -nographic
 " Enter
 
 time_vm_start=$(date +%s)
 
 
-wait_for_prompt_and_send "Please unlock disk luks-volume:" "$PASSPHRASE"
+wait_for_prompt_and_send "unlock disk luks-volume:" "$PASSPHRASE"
 
 sleep 10
 

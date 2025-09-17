@@ -5,10 +5,17 @@ autoinstall:
   identity:
     hostname: test-ubuntu
     username: ubuntu
-    password: "$6$pQBjjcoCGHYvtUTS$3pBKrm7luA/wnUlM/C/5Ih8peWJ2J6MM.uZ9sDXR0iFzL4fI5PESXD.XW5Ql3.LO.VwaqwE3JhQBTINqaMuie/"  # 'pass' hashed
+    password: '$6$pQBjjcoCGHYvtUTS$3pBKrm7luA/wnUlM/C/5Ih8peWJ2J6MM.uZ9sDXR0iFzL4fI5PESXD.XW5Ql3.LO.VwaqwE3JhQBTINqaMuie/'  # 'pass' hashed
 
+  refresh-installer:
+    update: true
+    channel: '25.04/candidate'     # not “stable”, used to overcome the swap file mount bug
 
   storage:
+    bootloader:
+      install_devices:
+        - disk-system
+      type: grub-efi
     config:
       - id: disk-system
         type: disk
@@ -16,22 +23,16 @@ autoinstall:
           size: largest
         ptable: gpt
         wipe: superblock
+        preserve: false
         name: system
-        grub_device: true
-
-      - id: part-bios
-        type: partition
-        device: disk-system
-        size: 1M
-        flag: bios_grub
-
 
       - id: part-efi
         type: partition
         device: disk-system
         size: 1G
         wipe: superblock
-        flag: boot
+        flags: [boot, esp]
+        grub_device: true
 
       - id: format-efi
         type: format
@@ -39,8 +40,11 @@ autoinstall:
         fstype: fat32
         label: efi
 
-
-      - id: LinuxBoot
+      - id: mount-efi
+        device: format-efi
+        path: /boot/efi
+        type: mount
+      - id: part-boot
         type: partition
         device: disk-system
         size: 1G
@@ -48,7 +52,7 @@ autoinstall:
 
       - id: format-boot
         type: format
-        volume: LinuxBoot
+        volume: part-boot
         fstype: ext4
         label: boot
 
@@ -61,70 +65,61 @@ autoinstall:
       - id: luks-volume
         type: dm_crypt
         volume: luks-part
-        key: "pass"
+        key: pass
 
-      - name: vg0
+      - id: id_vg0
+        name: vg0
         type: lvm_volgroup
         devices: [luks-volume]
-        preserve: false
-        id: id_vg0
 
-      - name: lv_swap
+      - id: lv_swap
+        name: lv_swap
         type: lvm_partition
         volgroup: id_vg0
         size: 8G
-        id: lv_swap
 
-      - fstype: swap
+      - id: format-swap
+        fstype: swap
         volume: lv_swap
         type: format
-        id: format-swap
 
-      - name: ubuntu-lv
+      - id: lv_root
+        name: ubuntu-lv
         volgroup: id_vg0
-        size: -1
-        preserve: false
         type: lvm_partition
-        id: lvm_partition-1
+        size: -1
 
-      - fstype: ext4
-        volume: lvm_partition-1
-        preserve: false
+      - id: format-root
+        fstype: ext4
+        volume: lv_root
         type: format
-        id: format-3
 
-      - device: format-3
-        path: /
-        type: mount
-        id: mount-lvm
-
-      - device:  format-boot
+      - id: mount-boot
+        device: format-boot
         path: /boot
         type: mount
-        id: mount-boot
 
-      - device: format-efi
-        path: /boot/efi
+      - id: mount-root
         type: mount
-        id: mount-efi
+        device: format-root
+        path: /
 
 
-
-  # the | means a multi line block of text
-  # Run a literal, trace-enabled shell script block that exits on error: debug + strict mode heredoc
   late-commands:
-  # (A) Write a file *inside* the new root:
-  - curtin in-target --target=/target -- bash -c 'echo test5 > /etc/test5.conf'
-  # (B) Edit the target’s /etc/default/grub with sed:
-  - curtin in-target --target=/target -- sed -i 's|^GRUB_CMDLINE_LINUX_DEFAULT=.*|GRUB_CMDLINE_LINUX_DEFAULT="console=ttyS0 earlyprintk=ttyS0 network-config=disabled"|g' /etc/default/grub
-  # (C) Then rebuild grub in the target:
-  - curtin in-target --target=/target -- update-grub
-  # Trying to prevent the 120s wait on first boot from systemd-networkd-wait-online
-  # Mask the wait-online service to prevent it from delaying boot
-  - curtin in-target --target=/target -- systemctl mask systemd-networkd-wait-online.service
-  # Create a drop-in override to neutralize the wait-online behavior
-  - curtin in-target --target=/target -- mkdir -p /etc/systemd/system/systemd-networkd-wait-online.service.d
-  - curtin in-target --target=/target -- bash -c "echo -e '[Service]\nExecStart=\nExecStart=/lib/systemd/systemd-networkd-wait-online --any' > /etc/systemd/system/systemd-networkd-wait-online.service.d/override.conf"
+    # (A) Write a file *inside* the new root:
+    - curtin in-target --target=/target -- bash -c 'echo test5 > /etc/test5.conf'
+    # (B) Edit the target’s /etc/default/grub with sed:
+    - curtin in-target --target=/target -- sed -i 's|^GRUB_CMDLINE_LINUX_DEFAULT=.*|GRUB_CMDLINE_LINUX_DEFAULT="console=ttyS0 earlyprintk=ttyS0 network-config=disabled"|g' /etc/default/grub
+    # almost no timeout
+    - curtin in-target --target=/target -- sed -i 's/^GRUB_TIMEOUT=.*/GRUB_TIMEOUT=1/' /etc/default/grub
+    # (C) Then rebuild grub in the target:
+    - curtin in-target --target=/target -- update-grub
+    # Trying to prevent the 120s wait on first boot from systemd-networkd-wait-online
+    # Mask the wait-online service to prevent it from delaying boot
+    - curtin in-target --target=/target -- systemctl mask systemd-networkd-wait-online.service
+    # Create a drop-in override to neutralize the wait-online behavior
+    - curtin in-target --target=/target -- mkdir -p /etc/systemd/system/systemd-networkd-wait-online.service.d
+    - curtin in-target --target=/target -- bash -c "echo -e '[Service]\nExecStart=\nExecStart=/lib/systemd/systemd-networkd-wait-online --any' > /etc/systemd/system/systemd-networkd-wait-online.service.d/override.conf"
 
 
   user-data:
@@ -134,6 +129,9 @@ autoinstall:
         groups: users, admin
         sudo: ALL=(ALL) NOPASSWD:ALL
         passwd: $6$pQBjjcoCGHYvtUTS$3pBKrm7luA/wnUlM/C/5Ih8peWJ2J6MM.uZ9sDXR0iFzL4fI5PESXD.XW5Ql3.LO.VwaqwE3JhQBTINqaMuie/
+
+    # packages:
+    #   - ubuntu-desktop
 
     write_files:
       - path: /usr/local/bin/setup-hibernate.sh
@@ -147,10 +145,6 @@ autoinstall:
           systemctl disable systemd-networkd-wait-online.service
           systemctl disable network-online.target
 
-          # echo "[*] Marking netplan interfaces optional..."
-          # for f in /etc/netplan/*.yaml; do
-          #   sed -i "s/dhScp4: true/&\n      optional: true/" "$f"
-          # done
 
           echo "[*] Disabling systemd wait..."
           mkdir -p /etc/systemd/system/systemd-networkd-wait-online.service.d
@@ -187,4 +181,5 @@ autoinstall:
           exit 0
 
     runcmd:
-      - [ bash, /usr/local/bin/setup-hibernate.sh ]
+      - bash /usr/local/bin/setup-hibernate.sh
+      - bash -c "apt install -y linux-image-generic"
