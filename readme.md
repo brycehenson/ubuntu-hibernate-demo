@@ -9,11 +9,13 @@ Steps:
 - For the remaining boots we run VM in tmux, this allows us to inject the FDE paraphrase and login.
 - First boot for cloud-init configuration
   - verifies that `/etc/crypttab` references the custom keyscript for custom LUKS unlock prompt.
+  - verifies that the rebuilt initramfs contains the custom keyscript for the unlock prompt.
   - check that grub command line defaults are correct
   - reboot
 - Second boot
   - check that we get the custom LUKS unlock prompt
-  - check that swap file and hibernate is configured correctly
+  - inspect active swap with `swapon --show`
+  - inspect `resume` on `/proc/cmdline`
   - trigger a hibernate
 - Third boot
   - check that we get the custom LUKS unlock prompt
@@ -38,3 +40,4 @@ if you want to break out While QEMU is attached in the terminal:
 # TODO
 - [x] no wait for network on first boot
 - [x] Clean up boot and check script
+- [ ] disable the swap file, and check that it is disabled
