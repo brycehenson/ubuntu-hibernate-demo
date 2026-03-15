@@ -141,11 +141,41 @@ autoinstall:
           set -eux
 
           install_custom_luks_prompt() {
-            echo "[*] Installing custom initramfs LUKS prompt..."
-            mkdir -p /etc/initramfs-tools/hooks
-            cat > /etc/initramfs-tools/hooks/custom-crypt-prompt <<'HOOK'
+            local keyscript_path="/lib/cryptsetup/scripts/custom-askpass-banner"
+            local initramfs_hook_path="/etc/initramfs-tools/hooks/custom-askpass-banner"
+
+            echo "[*] Installing custom cryptsetup keyscript..."
+            cat > "$keyscript_path" <<'SCRIPT'
           #!/bin/sh
-          PREREQ=""
+          if [ -c /dev/console ]; then
+            exec 3>/dev/console
+          else
+            exec 3>&2
+          fi
+
+          cat >&3 <<'PROMPT'
+
+          =============================================
+
+          Hi there friend, thanks for finding my laptop !
+          I would be most grateful if you could return it to me and
+          would be delighted to furnish you with beer and food.
+          Please contact me at the below
+
+          email:xxx
+
+          ==============================================
+
+          PROMPT
+
+          exec /lib/cryptsetup/askpass "Please unlock disk ${CRYPTTAB_NAME}: " 2>&3
+          SCRIPT
+            chmod 0755 "$keyscript_path"
+
+            echo "[*] Installing initramfs hook for custom cryptsetup prompt..."
+            cat > "$initramfs_hook_path" <<'HOOK'
+          #!/bin/sh
+          PREREQ="cryptroot"
 
           prereqs() {
             echo "$PREREQ"
@@ -160,30 +190,32 @@ autoinstall:
 
           . /usr/share/initramfs-tools/hook-functions
 
-          mkdir -p "${DESTDIR}/scripts/local-top"
-          cat > "${DESTDIR}/scripts/local-top/00-custom-crypt-prompt" <<'SCRIPT'
-          #!/bin/sh
-          cat <<'PROMPT'
-
-          =============================================
-
-          Hi there friend, thanks for finding my laptop !
-          I would be most grateful if you could return it to me and
-          would be delighted to furnish you with beer and food.
-          Please contact me at the below
-
-          email:xxx
-
-          ==============================================
-            Enter passphrase to unlock LUKS root volume
-          ==============================================
-
-          PROMPT
-          SCRIPT
-
-          chmod 0755 "${DESTDIR}/scripts/local-top/00-custom-crypt-prompt"
+          copy_exec /lib/cryptsetup/scripts/custom-askpass-banner
+          copy_exec /lib/cryptsetup/askpass
           HOOK
-            chmod 0755 /etc/initramfs-tools/hooks/custom-crypt-prompt
+            chmod 0755 "$initramfs_hook_path"
+
+            if grep -qE '^luks-volume[[:space:]]' /etc/crypttab; then
+              awk -v keyscript="$keyscript_path" '
+                BEGIN { OFS="\t" }
+                $1 == "luks-volume" {
+                  gsub(/(^|,)initramfs(,|$)/, ",", $4)
+                  gsub(/,?keyscript=[^,[:space:]]+/, "", $4)
+                  gsub(/,,+/, ",", $4)
+                  gsub(/^,|,$/, "", $4)
+                  if ($4 == "") {
+                    $4 = "initramfs,keyscript=" keyscript
+                  } else {
+                    $4 = $4 ",initramfs,keyscript=" keyscript
+                  }
+                }
+                { print }
+              ' /etc/crypttab > /etc/crypttab.tmp
+              mv /etc/crypttab.tmp /etc/crypttab
+            else
+              echo "ERROR: luks-volume entry missing from /etc/crypttab" >&2
+              exit 1
+            fi
           }
 
           echo "[*] Disabling network wait..."
@@ -219,7 +251,9 @@ autoinstall:
           echo "[*] Updating grub and initramfs..."
           update-grub
           update-initramfs -u
-          lsinitramfs "/boot/initrd.img-$(uname -r)" | grep -qx 'scripts/local-top/00-custom-crypt-prompt'
+          grep -E '^luks-volume[[:space:]]' /etc/crypttab | grep -F 'initramfs'
+          grep -E '^luks-volume[[:space:]]' /etc/crypttab | grep -F 'keyscript=/lib/cryptsetup/scripts/custom-askpass-banner'
+          lsinitramfs "/boot/initrd.img-$(uname -r)" | grep -qxE '(usr/)?lib/cryptsetup/scripts/custom-askpass-banner'
 
           echo " GRUB ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++"
           logger -t grub -- "$(cat /etc/default/grub)"

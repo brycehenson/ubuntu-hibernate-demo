@@ -176,9 +176,9 @@ qemu-system-x86_64 \
   -drive file="$DISK_IMG",format=qcow2,if=virtio \
   -boot order=d \
   -serial mon:stdio \
-  -netdev user,id=net0 -device e1000,netdev=net0 \
   -nographic \
   -no-reboot
+#   -netdev user,id=net0 -device e1000,netdev=net0 \
 # dont allow the vm to reboot so we catch it rebooting after install
 
 end=$(date +%s)

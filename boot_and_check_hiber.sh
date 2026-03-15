@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=common.sh
+source "$SCRIPT_DIR/common.sh"
+
 # The stages
 # - first boot: boot and allow cloud init to configure
 #   - fde paraphrase
@@ -15,14 +19,23 @@ set -euo pipefail
 #   - check that the file we wrote is still there
 
 DISK_IMG="/home/bryce/vm/ubuntu-demo/vm-disk.qcow2"
-SESSION="vmconsole"
+SESSION_BASE="vmconsole"
+SESSION_SUFFIX="$(printf '%04d' "$((RANDOM % 10000))")"
+SESSION="${SESSION_BASE}-${SESSION_SUFFIX}"
 WINDOW="1"
 PANE="${SESSION}:${WINDOW}"
 PASSPHRASE="pass"
 USERNAME="ubuntu"
 PASSWORD="pass"
 CUSTOM_LUKS_PROMPT_MARKER="Hi there friend, thanks for finding my laptop !"
-CUSTOM_LUKS_PROMPT_SCRIPT_PATH="scripts/local-top/00-custom-crypt-prompt"
+CUSTOM_LUKS_PROMPT_SCRIPT_PATH="/lib/cryptsetup/scripts/custom-askpass-banner"
+CUSTOM_LUKS_PROMPT_INITRAMFS_PATH_REGEX='(usr/)?lib/cryptsetup/scripts/custom-askpass-banner'
+CUSTOM_LUKS_PROMPT_CRYPTTAB_OK="__CUSTOM_LUKS_PROMPT_CRYPTTAB_OK__"
+CUSTOM_LUKS_PROMPT_CRYPTTAB_MISSING="__CUSTOM_LUKS_PROMPT_CRYPTTAB_MISSING__"
+CUSTOM_LUKS_PROMPT_HOOK_OK="__CUSTOM_LUKS_PROMPT_HOOK_PRESENT__"
+CUSTOM_LUKS_PROMPT_HOOK_MISSING="__CUSTOM_LUKS_PROMPT_HOOK_MISSING__"
+CUSTOM_LUKS_PROMPT_DIAG_BEGIN="__CUSTOM_LUKS_PROMPT_DIAG_BEGIN__"
+CUSTOM_LUKS_PROMPT_DIAG_END="__CUSTOM_LUKS_PROMPT_DIAG_END__"
 TMPDIR="$(mktemp -d)"
 CLOUDISO="${TMPDIR}/cloud.iso"
 
@@ -140,9 +153,8 @@ tmux new-session -d \
     -drive if=pflash,format=raw,file=$OVMF_VARS \
     -drive file=$DISK_IMG,format=qcow2,if=virtio \
     -serial mon:stdio \
-    -nic user,model=virtio,mac=52:54:00:f6:2c:43 \
     -nographic; exec bash"
-
+#     -nic user,model=virtio,mac=52:54:00:f6:2c:43 \
 time_vm_start=$(date +%s)
 
 
@@ -150,65 +162,102 @@ time_vm_start=$(date +%s)
 # TODO: Would be great for this to all stay in the original terminal but split screen
 launch_tmux_viewer || true
 
-wait_for_text() {
-  local text="$1"
-  local num_lines="${2:-20}"
-  local delay="${3:-1}"
-
-  echo "[*] Waiting for text: $text"
-  while true; do
-    OUTPUT=$(capture_recent_output "$num_lines")
-    if echo "$OUTPUT" | grep -Fqi "$text"; then
-      now=$(date +%s)
-      echo "[*] Found text: $text +$((now - time_vm_start)) seconds"
-      return 0
-    fi
-    sleep "$delay"
-  done
-}
-
-wait_for_prompt_and_send() {
-  local prompt="$1"
-  local input="$2"
-  local num_lines="${3:-10}"
-  local delay="${4:-1}"
-
-  echo "[*] Waiting for prompt: $prompt"
-  while true; do
-    now=$(date +%s)
-    pane_height=$(tmux display -p -t "$PANE" '#{pane_height}')
-    START_LINE=$((pane_height - num_lines))
-    OUTPUT=$(tmux capture-pane -p -S ${START_LINE} -E -  -t "$PANE")
-    # use regex matching
-    if echo "$OUTPUT" | grep -qiE "$prompt"; then
-      now=$(date +%s)
-      echo "[*] Sending input for prompt: $prompt +$((now - time_vm_start)) seconds"
-      tmux send-keys -t "$PANE" "$input" Enter
-      break
-    fi
-    sleep "$delay"
-  done
-}
-
 unlock_disk() {
   local expect_custom_prompt="${1:-false}"
 
   if [[ "$expect_custom_prompt" == "true" ]]; then
-    wait_for_text "$CUSTOM_LUKS_PROMPT_MARKER" 25 1
+    wait_for_custom_luks_prompt
   fi
 
-  wait_for_prompt_and_send "unlock disk luks-volume:" "$PASSPHRASE" 25 1
+  wait_for_prompt_and_send "$PANE" "unlock disk luks-volume:" "$PASSPHRASE" "$time_vm_start" 25 1 30
+}
+
+dump_recent_pane_scrollback() {
+  echo "[!] Recent VM console scrollback:"
+  tmux_capture_scrollback "$PANE" -200
+}
+
+dump_initramfs_custom_prompt_diagnostics() {
+  local output
+  local diagnostics
+
+  echo "[*] Collecting initramfs diagnostics for the custom LUKS prompt"
+  tmux send-keys -t "$PANE" "tmpdir=\$(mktemp -d) && initrd=/boot/initrd.img-\$(uname -r) && printf '%s\n' '$CUSTOM_LUKS_PROMPT_DIAG_BEGIN' && printf 'kernel=%s\n' \"\$(uname -r)\" && printf '%s\n' '-- /etc/crypttab entry --' && grep -nE '^luks-volume[[:space:]]' /etc/crypttab || true && printf '%s\n' '-- lsinitramfs matches --' && lsinitramfs \"\$initrd\" | grep -E 'cryptroot/crypttab|custom-askpass-banner|lib/cryptsetup/(askpass|scripts)' || true && if command -v unmkinitramfs >/dev/null 2>&1; then unmkinitramfs \"\$initrd\" \"\$tmpdir\" >/dev/null 2>&1 || true; printf '%s\n' '-- embedded cryptroot/crypttab --' && if [ -f \"\$tmpdir/main/cryptroot/crypttab\" ]; then grep -nE '^luks-volume[[:space:]]' \"\$tmpdir/main/cryptroot/crypttab\" || true; else printf '%s\n' 'embedded cryptroot/crypttab missing'; fi; else printf '%s\n' 'unmkinitramfs not available'; fi; rm -rf \"\$tmpdir\"; printf '%s\n' '$CUSTOM_LUKS_PROMPT_DIAG_END'" Enter
+  wait_for_ready
+  output=$(tmux_capture_scrollback "$PANE" -400)
+  diagnostics=$(printf '%s\n' "$output" | sed -n "/$CUSTOM_LUKS_PROMPT_DIAG_BEGIN/,/$CUSTOM_LUKS_PROMPT_DIAG_END/p")
+  if [[ -n "$diagnostics" ]]; then
+    printf '%s\n' "$diagnostics"
+  else
+    echo "[!] Initramfs diagnostics were requested, but the marker block was not found."
+    dump_recent_pane_scrollback
+  fi
+}
+
+wait_for_custom_luks_prompt() {
+  local output
+  local now
+  local wait_started_s
+
+  echo "[*] Waiting for the custom LUKS banner before the unlock prompt"
+  wait_started_s=$(date +%s)
+  while true; do
+    now=$(date +%s)
+    output=$(tmux_capture_scrollback "$PANE" -200)
+    if printf '%s\n' "$output" | grep -Fqi "$CUSTOM_LUKS_PROMPT_MARKER"; then
+      echo "[*] Found custom LUKS banner +$((now - time_vm_start)) seconds"
+      return 0
+    fi
+    if printf '%s\n' "$output" | grep -Fqi "Please unlock disk luks-volume:"; then
+      echo "ERROR: unlock prompt appeared before the custom LUKS banner" >&2
+      dump_recent_pane_scrollback
+      exit 1
+    fi
+    if (( now - wait_started_s >= 30 )); then
+      echo "ERROR: timed out waiting for the custom LUKS banner" >&2
+      dump_recent_pane_scrollback
+      exit 1
+    fi
+    sleep 1
+  done
 }
 
 assert_initramfs_contains_custom_prompt() {
-  echo "[*] Verifying custom prompt hook is packed into initramfs"
-  tmux send-keys -t "$PANE" "lsinitramfs /boot/initrd.img-\$(uname -r) | grep -x '$CUSTOM_LUKS_PROMPT_SCRIPT_PATH'" Enter
-  sleep 0.5
-  OUTPUT=$(tmux capture-pane -p -S -200 -t "$PANE")
-  if echo "$OUTPUT" | grep -q "$CUSTOM_LUKS_PROMPT_SCRIPT_PATH"; then
-    echo "OK: custom LUKS prompt hook found in initramfs"
+  local output
+
+  echo "[*] Verifying custom prompt keyscript is packed into initramfs"
+  tmux send-keys -t "$PANE" "if lsinitramfs /boot/initrd.img-\$(uname -r) | grep -qxE '$CUSTOM_LUKS_PROMPT_INITRAMFS_PATH_REGEX'; then printf '%s\n' '$CUSTOM_LUKS_PROMPT_HOOK_OK'; else printf '%s\n' '$CUSTOM_LUKS_PROMPT_HOOK_MISSING'; fi" Enter
+  wait_for_ready
+  output=$(tmux_capture_scrollback "$PANE")
+  if printf '%s\n' "$output" | grep -Fxq "$CUSTOM_LUKS_PROMPT_HOOK_OK"; then
+    echo "OK: custom LUKS prompt keyscript found in initramfs"
+  elif printf '%s\n' "$output" | grep -Fxq "$CUSTOM_LUKS_PROMPT_HOOK_MISSING"; then
+    echo "ERROR: custom LUKS prompt keyscript missing from initramfs"
+    dump_initramfs_custom_prompt_diagnostics
+    exit 1
   else
-    echo "ERROR: custom LUKS prompt hook missing from initramfs"
+    echo "ERROR: could not determine whether the custom LUKS prompt keyscript is packed into initramfs"
+    dump_recent_pane_scrollback
+    exit 1
+  fi
+}
+
+assert_crypttab_contains_custom_prompt_keyscript() {
+  local output
+
+  echo "[*] Verifying /etc/crypttab includes the custom prompt keyscript"
+  tmux send-keys -t "$PANE" "if grep -E '^luks-volume[[:space:]]' /etc/crypttab | grep -Fq 'keyscript=$CUSTOM_LUKS_PROMPT_SCRIPT_PATH'; then printf '%s\n' '$CUSTOM_LUKS_PROMPT_CRYPTTAB_OK'; else printf '%s\n' '$CUSTOM_LUKS_PROMPT_CRYPTTAB_MISSING'; fi" Enter
+  wait_for_ready
+  output=$(tmux_capture_scrollback "$PANE")
+  if printf '%s\n' "$output" | grep -Fxq "$CUSTOM_LUKS_PROMPT_CRYPTTAB_OK"; then
+    echo "OK: /etc/crypttab contains the custom LUKS prompt keyscript"
+  elif printf '%s\n' "$output" | grep -Fxq "$CUSTOM_LUKS_PROMPT_CRYPTTAB_MISSING"; then
+    echo "ERROR: /etc/crypttab does not contain the custom LUKS prompt keyscript"
+    dump_recent_pane_scrollback
+    exit 1
+  else
+    echo "ERROR: could not determine whether /etc/crypttab contains the custom LUKS prompt keyscript"
+    dump_recent_pane_scrollback
     exit 1
   fi
 }
@@ -218,15 +267,14 @@ wait_for_ready() {
   local prompt=".*\\$\\s*"
   local num_lines=1
   local delay=0.1
+  local output
+
   echo "[*] Waiting for prompt: $prompt"
   while true; do
     now=$(date +%s)
-    PANE_HEIGHT=$(tmux display -p -t "$PANE" '#{pane_height}')
-    NUM_LINES=1
-    START_LINE=$((PANE_HEIGHT - NUM_LINES))
-    OUTPUT=$(tmux capture-pane -p -S ${START_LINE} -E -  -t "$PANE")
+    output=$(tmux_capture_recent_output "$PANE" "$num_lines")
     # use regex matching
-    if echo "$OUTPUT" | grep -P -x "$prompt"; then
+    if echo "$output" | grep -P -x "$prompt"; then
       now=$(date +%s)
       echo "terminal ready: +$((now - time_vm_start)) seconds"
       break
@@ -241,8 +289,8 @@ echo "first boot for cloud-init config"
 unlock_disk false
 
 # Perform user login
-wait_for_prompt_and_send "login:" "$USERNAME"
-wait_for_prompt_and_send "Password:" "$PASSWORD"
+wait_for_prompt_and_send "$PANE" "login:" "$USERNAME" "$time_vm_start" 0
+wait_for_prompt_and_send "$PANE" "Password:" "$PASSWORD" "$time_vm_start" 0
 
 wait_for_ready
 
@@ -250,19 +298,22 @@ wait_for_ready
 # follow the cloud init log and wait for the finished line
 tmux send-keys -t "$PANE" "watch -n 1 'grep \"finished\" /var/log/cloud-init-output.log'" Enter
 # when finished exit the tail
-wait_for_prompt_and_send "Cloud-init v\..* finished at .*" "q" 50
+wait_for_prompt_and_send "$PANE" "Cloud-init v\..* finished at .*" "q" "$time_vm_start" 0
 # exit the tail -f
 tmux send-keys -t "$PANE" C-c
 
 wait_for_ready
+assert_crypttab_contains_custom_prompt_keyscript
 assert_initramfs_contains_custom_prompt
-
+wait_for_ready
+tmux send-keys -t "$PANE"  Enter
+sleep 0.5
 #
 echo "looking for GRUB_CMDLINE_LINUX_DEFAULT"
 tmux send-keys -t "$PANE" "cat /etc/default/grub " Enter
 sleep 0.5
 # capture the pane output
-OUTPUT=$(tmux capture-pane -p -S -200 -t "$PANE")
+OUTPUT=$(tmux_capture_scrollback "$PANE")
 # test for the line but don’t let grep’s exit kill the script
 if echo "$OUTPUT" | grep -q "GRUB_CMDLINE_LINUX_DEFAULT="; then
   # 1) capture the exact line into DEFAULT_LINE
@@ -278,6 +329,7 @@ if echo "$OUTPUT" | grep -q "GRUB_CMDLINE_LINUX_DEFAULT="; then
 
 else
   echo "ERROR: could not find GRUB_CMDLINE_LINUX_DEFAULT line"
+  read 
 fi
 
 
@@ -292,8 +344,8 @@ tmux send-keys -t "$PANE" "sudo reboot now" Enter
 unlock_disk true
 
 # Perform user login
-wait_for_prompt_and_send "login:" "$USERNAME"
-wait_for_prompt_and_send "Password:" "$PASSWORD"
+wait_for_prompt_and_send "$PANE" "login:" "$USERNAME" "$time_vm_start"
+wait_for_prompt_and_send "$PANE" "Password:" "$PASSWORD" "$time_vm_start"
 
 # now we are logged back in
 
@@ -333,9 +385,9 @@ qemu-system-x86_64 \\
   -drive if=pflash,format=raw,file=$OVMF_VARS \\
   -drive file=$DISK_IMG,format=qcow2,if=virtio \\
   -serial mon:stdio \\
-  -nic user,model=virtio,mac=52:54:00:f6:2c:43 \\
   -nographic
 " Enter
+#   -nic user,model=virtio,mac=52:54:00:f6:2c:43 \\
 
 time_vm_start=$(date +%s)
 
@@ -352,7 +404,7 @@ echo "looking for magic-suspend-token"
 tmux send-keys -t "$PANE" "cat /dev/shm/hibernation_check " Enter
 sleep 0.5
 # capture the pane output
-OUTPUT=$(tmux capture-pane -p -S -200 -t "$PANE")
+OUTPUT=$(tmux_capture_scrollback "$PANE")
 # test for the line but don’t let grep’s exit kill the script
 if echo "$OUTPUT" | grep -q "magic-suspend-token645632"; then
   echo "found magic-suspend-token hibernation is WORKING !!!"
