@@ -140,6 +140,52 @@ autoinstall:
           #!/bin/bash
           set -eux
 
+          install_custom_luks_prompt() {
+            echo "[*] Installing custom initramfs LUKS prompt..."
+            mkdir -p /etc/initramfs-tools/hooks
+            cat > /etc/initramfs-tools/hooks/custom-crypt-prompt <<'HOOK'
+          #!/bin/sh
+          PREREQ=""
+
+          prereqs() {
+            echo "$PREREQ"
+          }
+
+          case "$1" in
+            prereqs)
+              prereqs
+              exit 0
+              ;;
+          esac
+
+          . /usr/share/initramfs-tools/hook-functions
+
+          mkdir -p "${DESTDIR}/scripts/local-top"
+          cat > "${DESTDIR}/scripts/local-top/00-custom-crypt-prompt" <<'SCRIPT'
+          #!/bin/sh
+          cat <<'PROMPT'
+
+          =============================================
+
+          Hi there friend, thanks for finding my laptop !
+          I would be most grateful if you could return it to me and
+          would be delighted to furnish you with beer and food.
+          Please contact me at the below
+
+          email:xxx
+
+          ==============================================
+            Enter passphrase to unlock LUKS root volume
+          ==============================================
+
+          PROMPT
+          SCRIPT
+
+          chmod 0755 "${DESTDIR}/scripts/local-top/00-custom-crypt-prompt"
+          HOOK
+            chmod 0755 /etc/initramfs-tools/hooks/custom-crypt-prompt
+          }
+
           echo "[*] Disabling network wait..."
           systemctl mask systemd-networkd-wait-online.service
           systemctl disable systemd-networkd-wait-online.service
@@ -168,10 +214,12 @@ autoinstall:
           grep -q "^GRUB_TERMINAL=" /etc/default/grub || echo 'GRUB_TERMINAL=serial' >> /etc/default/grub
           #grep -q "^GRUB_SERIAL_COMMAND=" /etc/default/grub || echo 'GRUB_SERIAL_COMMAND="serial --speed=115200 --unit=0 --word=8 --parity=no --stop=1"' >> /etc/default/grub
           systemctl enable serial-getty@ttyS0.service
+          install_custom_luks_prompt
 
           echo "[*] Updating grub and initramfs..."
           update-grub
           update-initramfs -u
+          lsinitramfs "/boot/initrd.img-$(uname -r)" | grep -qx 'scripts/local-top/00-custom-crypt-prompt'
 
           echo " GRUB ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++"
           logger -t grub -- "$(cat /etc/default/grub)"

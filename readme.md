@@ -27,6 +27,23 @@ sudo apt install cloud-image-utils tmux qemu-utils
  ./autoinstall_vm.sh && ./boot_and_check_hiber.sh
  ```
 
+# Validate custom LUKS prompt
+
+The validation flow uses the same VM lifecycle already in this repo:
+
+1. `./autoinstall_vm.sh` installs Ubuntu with encrypted root.
+2. On the first real boot, cloud-init writes an initramfs hook that injects a custom message before the cryptroot unlock prompt and rebuilds initramfs.
+3. `./boot_and_check_hiber.sh` verifies that the hook was packed into initramfs.
+4. On the next encrypted boot, and again on resume-from-hibernate, the script waits for the custom marker text on the serial console before it sends the LUKS passphrase.
+
+Test command:
+
+```
+./autoinstall_vm.sh && ./boot_and_check_hiber.sh
+```
+
+The run should print `OK: custom LUKS prompt hook found in initramfs` and then continue only after it has seen `Hi there friend, thanks for finding my laptop !` on the unlock screen.
+
 # TODO
 - [x] no wait for network on first boot
 - [x] Clean up boot and check script

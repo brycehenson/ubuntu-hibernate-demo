@@ -7,11 +7,12 @@ ISO_URL="https://releases.ubuntu.com/25.04/ubuntu-25.04-live-server-amd64.iso"
 AUTOINSTALL_DIR="autoinstall"
 ISO_PATH="${USER_HOME}/Downloads/ubuntu-25.04-live-server-amd64.iso"
 NOCLOUD_ISO="working/nocloud.iso"
-mkdir -p /working
+mkdir -p working
 
-VM_DIR="${USER_HOME}/vm/ubuntu-for-thinkpad"
+VM_DIR="${USER_HOME}/vm/ubuntu-demo"
 DISK_IMG="${VM_DIR}/vm-disk.qcow2"
 OUT_ISO="${VM_DIR}/ubuntu-autoinstall-patched.iso"
+mkdir -p "$VM_DIR"
 
 
 # Override these if your OVMF firmware lives elsewhere

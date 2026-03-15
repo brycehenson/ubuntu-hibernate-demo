@@ -14,13 +14,15 @@ set -euo pipefail
 # - resume from hibernate
 #   - check that the file we wrote is still there
 
-DISK_IMG="/home/bryce/vm/ubuntu-for-thinkpad/vm-disk.qcow2"
+DISK_IMG="/home/bryce/vm/ubuntu-demo/vm-disk.qcow2"
 SESSION="vmconsole"
 WINDOW="1"
 PANE="${SESSION}:${WINDOW}"
 PASSPHRASE="pass"
 USERNAME="ubuntu"
 PASSWORD="pass"
+CUSTOM_LUKS_PROMPT_MARKER="Hi there friend, thanks for finding my laptop !"
+CUSTOM_LUKS_PROMPT_SCRIPT_PATH="scripts/local-top/00-custom-crypt-prompt"
 TMPDIR="$(mktemp -d)"
 CLOUDISO="${TMPDIR}/cloud.iso"
 
@@ -76,6 +78,48 @@ cleanup() {
 }
 trap cleanup EXIT
 
+is_kde_session() {
+  [[ "${XDG_CURRENT_DESKTOP:-}" == *KDE* ]] || \
+    [[ "${DESKTOP_SESSION:-}" == *kde* ]] || \
+    [[ -n "${KDE_FULL_SESSION:-}" ]]
+}
+
+is_gnome_session() {
+  [[ "${XDG_CURRENT_DESKTOP:-}" == *GNOME* ]] || \
+    [[ "${DESKTOP_SESSION:-}" == *gnome* ]]
+}
+
+launch_tmux_viewer() {
+  local attach_cmd=(tmux attach-session -t "$SESSION")
+
+  if is_kde_session && command -v konsole >/dev/null 2>&1; then
+    echo "[*] Launching tmux viewer in Konsole"
+    if konsole -e "${attach_cmd[@]}" >/dev/null 2>&1 & disown; then
+      return 0
+    fi
+    echo "[!] Konsole launch failed; continuing without popup terminal"
+  fi
+
+  if is_gnome_session && command -v gnome-terminal >/dev/null 2>&1; then
+    echo "[*] Launching tmux viewer in GNOME Terminal"
+    if gnome-terminal -- "${attach_cmd[@]}" >/dev/null 2>&1 & disown; then
+      return 0
+    fi
+    echo "[!] GNOME Terminal launch failed; continuing without popup terminal"
+  fi
+
+  if command -v x-terminal-emulator >/dev/null 2>&1; then
+    echo "[*] Launching tmux viewer in x-terminal-emulator"
+    if x-terminal-emulator -e "${attach_cmd[@]}" >/dev/null 2>&1 & disown; then
+      return 0
+    fi
+    echo "[!] x-terminal-emulator launch failed; continuing without popup terminal"
+  fi
+
+  echo "[!] No supported GUI terminal launched; attach manually with: tmux attach -t $SESSION"
+  return 1
+}
+
 
 
 # Start tmux session with QEMU
@@ -104,13 +148,31 @@ time_vm_start=$(date +%s)
 
 # 2) Attach in another terminal
 # TODO: Would be great for this to all stay in the original terminal but split screen
-gnome-terminal -- tmux attach-session -t "$SESSION" & disown
+launch_tmux_viewer || true
+
+wait_for_text() {
+  local text="$1"
+  local num_lines="${2:-20}"
+  local delay="${3:-1}"
+
+  echo "[*] Waiting for text: $text"
+  while true; do
+    OUTPUT=$(capture_recent_output "$num_lines")
+    if echo "$OUTPUT" | grep -Fqi "$text"; then
+      now=$(date +%s)
+      echo "[*] Found text: $text +$((now - time_vm_start)) seconds"
+      return 0
+    fi
+    sleep "$delay"
+  done
+}
 
 wait_for_prompt_and_send() {
   local prompt="$1"
   local input="$2"
   local num_lines="${3:-10}"
   local delay="${4:-1}"
+
   echo "[*] Waiting for prompt: $prompt"
   while true; do
     now=$(date +%s)
@@ -126,6 +188,29 @@ wait_for_prompt_and_send() {
     fi
     sleep "$delay"
   done
+}
+
+unlock_disk() {
+  local expect_custom_prompt="${1:-false}"
+
+  if [[ "$expect_custom_prompt" == "true" ]]; then
+    wait_for_text "$CUSTOM_LUKS_PROMPT_MARKER" 25 1
+  fi
+
+  wait_for_prompt_and_send "unlock disk luks-volume:" "$PASSPHRASE" 25 1
+}
+
+assert_initramfs_contains_custom_prompt() {
+  echo "[*] Verifying custom prompt hook is packed into initramfs"
+  tmux send-keys -t "$PANE" "lsinitramfs /boot/initrd.img-\$(uname -r) | grep -x '$CUSTOM_LUKS_PROMPT_SCRIPT_PATH'" Enter
+  sleep 0.5
+  OUTPUT=$(tmux capture-pane -p -S -200 -t "$PANE")
+  if echo "$OUTPUT" | grep -q "$CUSTOM_LUKS_PROMPT_SCRIPT_PATH"; then
+    echo "OK: custom LUKS prompt hook found in initramfs"
+  else
+    echo "ERROR: custom LUKS prompt hook missing from initramfs"
+    exit 1
+  fi
 }
 
 # wait for the shell to be ready
@@ -153,7 +238,7 @@ wait_for_ready() {
 echo "first boot for cloud-init config"
 
 # Inject disk encryption passphrase
-wait_for_prompt_and_send "unlock disk luks-volume:" "$PASSPHRASE"
+unlock_disk false
 
 # Perform user login
 wait_for_prompt_and_send "login:" "$USERNAME"
@@ -170,6 +255,8 @@ wait_for_prompt_and_send "Cloud-init v\..* finished at .*" "q" 50
 tmux send-keys -t "$PANE" C-c
 
 wait_for_ready
+assert_initramfs_contains_custom_prompt
+
 #
 echo "looking for GRUB_CMDLINE_LINUX_DEFAULT"
 tmux send-keys -t "$PANE" "cat /etc/default/grub " Enter
@@ -201,8 +288,8 @@ wait_for_ready
 echo "rebooting"
 tmux send-keys -t "$PANE" "sudo reboot now" Enter
 
-# watch boot and pass paraphrase
-wait_for_prompt_and_send "unlock disk luks-volume:" "$PASSPHRASE"
+# watch boot and assert the custom prompt before unlocking
+unlock_disk true
 
 # Perform user login
 wait_for_prompt_and_send "login:" "$USERNAME"
@@ -253,7 +340,7 @@ qemu-system-x86_64 \\
 time_vm_start=$(date +%s)
 
 
-wait_for_prompt_and_send "unlock disk luks-volume:" "$PASSPHRASE"
+unlock_disk true
 
 sleep 10
 
