@@ -36,6 +36,10 @@ CUSTOM_LUKS_PROMPT_HOOK_OK="__CUSTOM_LUKS_PROMPT_HOOK_PRESENT__"
 CUSTOM_LUKS_PROMPT_HOOK_MISSING="__CUSTOM_LUKS_PROMPT_HOOK_MISSING__"
 CUSTOM_LUKS_PROMPT_DIAG_BEGIN="__CUSTOM_LUKS_PROMPT_DIAG_BEGIN__"
 CUSTOM_LUKS_PROMPT_DIAG_END="__CUSTOM_LUKS_PROMPT_DIAG_END__"
+ONLY_ONE_SWAP_OK="__ONLY_ONE_SWAP_OK__"
+ONLY_ONE_SWAP_BAD="__ONLY_ONE_SWAP_BAD__"
+SWAP_SHOW_BEGIN="__SWAP_SHOW_BEGIN__"
+SWAP_SHOW_END="__SWAP_SHOW_END__"
 TMPDIR="$(mktemp -d)"
 CLOUDISO="${TMPDIR}/cloud.iso"
 
@@ -177,6 +181,24 @@ dump_recent_pane_scrollback() {
   tmux_capture_scrollback "$PANE" -200
 }
 
+dump_active_swap_entries() {
+  local output
+  local swap_output
+
+  echo "[*] Collecting clean active swap listing"
+  tmux send-keys -t "$PANE" "printf '%s\n' '$SWAP_SHOW_BEGIN'; swapon --show; printf '%s\n' '$SWAP_SHOW_END'" Enter
+  wait_for_ready
+  output=$(tmux_capture_scrollback "$PANE" -200)
+  swap_output=$(printf '%s\n' "$output" | sed -n "/$SWAP_SHOW_BEGIN/,/$SWAP_SHOW_END/p" | sed "1d;\$d")
+  if [[ -n "$swap_output" ]]; then
+    echo "[!] Active swap entries:"
+    printf '%s\n' "$swap_output"
+  else
+    echo "[!] Active swap entries could not be captured cleanly."
+    dump_recent_pane_scrollback
+  fi
+}
+
 dump_initramfs_custom_prompt_diagnostics() {
   local output
   local diagnostics
@@ -257,6 +279,28 @@ assert_crypttab_contains_custom_prompt_keyscript() {
     exit 1
   else
     echo "ERROR: could not determine whether /etc/crypttab contains the custom LUKS prompt keyscript"
+    dump_recent_pane_scrollback
+    exit 1
+  fi
+}
+
+assert_only_one_swap_active() {
+  local output
+
+  echo "[*] Verifying there is exactly one active swap entry"
+  tmux send-keys -t "$PANE" "swap_lines=\$(swapon --show=NAME --noheadings | sed '/^[[:space:]]*$/d'); swap_count=\$(printf '%s\n' \"\$swap_lines\" | sed '/^[[:space:]]*$/d' | wc -l); printf '%s\n' \"\$swap_lines\"; if [ \"\$swap_count\" -eq 1 ]; then printf '%s\n' '$ONLY_ONE_SWAP_OK'; else printf '%s\n' '$ONLY_ONE_SWAP_BAD'; fi" Enter
+  wait_for_ready
+  output=$(tmux_capture_scrollback "$PANE")
+  if printf '%s\n' "$output" | grep -Fxq "$ONLY_ONE_SWAP_OK"; then
+    echo "OK: exactly one swap entry is active"
+  elif printf '%s\n' "$output" | grep -Fxq "$ONLY_ONE_SWAP_BAD"; then
+    echo "ERROR: expected exactly one active swap entry"
+    dump_active_swap_entries
+    dump_recent_pane_scrollback
+    exit 1
+  else
+    echo "ERROR: could not determine how many swap entries are active"
+    dump_active_swap_entries
     dump_recent_pane_scrollback
     exit 1
   fi
@@ -353,6 +397,7 @@ wait_for_ready
 
 tmux send-keys -t "$PANE" "swapon --show " Enter
 sleep 0.5
+assert_only_one_swap_active
 
 tmux send-keys -t "$PANE" "grep resume /proc/cmdline " Enter
 sleep 0.5
