@@ -42,6 +42,7 @@ SWAP_SHOW_BEGIN="__SWAP_SHOW_BEGIN__"
 SWAP_SHOW_END="__SWAP_SHOW_END__"
 TMPDIR="$(mktemp -d)"
 CLOUDISO="${TMPDIR}/cloud.iso"
+qemu_launch_id=1
 
 # Resolve OVMF firmware for UEFI boot; allow overrides via env vars
 DEFAULT_OVMF_CODE=(/usr/share/OVMF/OVMF_CODE.fd /usr/share/OVMF/OVMF_CODE_4M.fd)
@@ -157,7 +158,10 @@ tmux new-session -d \
     -drive if=pflash,format=raw,file=$OVMF_VARS \
     -drive file=$DISK_IMG,format=qcow2,if=virtio \
     -serial mon:stdio \
-    -nographic; exec bash"
+    -nographic; \
+    status=\$?; \
+    echo \"[*] QEMU exited with status \$status [launch=$qemu_launch_id]\"; \
+    exec bash"
 #     -nic user,model=virtio,mac=52:54:00:f6:2c:43 \
 time_vm_start=$(date +%s)
 
@@ -312,6 +316,7 @@ wait_for_ready() {
   local num_lines=1
   local delay=0.1
   local output
+  local now
 
   echo "[*] Waiting for prompt: $prompt"
   while true; do
@@ -407,18 +412,14 @@ sleep 0.5
 tmux send-keys -t "$PANE" "echo 'magic-suspend-token645632' > /dev/shm/hibernation_check" Enter
 
 # optional wait for enter
+hibernate_start_time=$(date +%s)
 tmux send-keys -t "$PANE" "sudo systemctl hibernate" Enter
 
-
-
-# TODO: how to check we are back at the host properly ??
-sleep 20
-# read -p "Press ENTER when qemu is done..."
-
-#
-wait_for_ready
+wait_for_text "$PANE" "QEMU exited with status" "$hibernate_start_time" 0 0.5 120
+wait_for_quiet_seconds "$PANE" 2 0.5
 
 # Now launch another VM instance
+qemu_launch_id=$((qemu_launch_id + 1))
 tmux send-keys -t "$SESSION:$WINDOW" "
 qemu-system-x86_64 \\
   -machine q35,accel=kvm \\
@@ -430,7 +431,10 @@ qemu-system-x86_64 \\
   -drive if=pflash,format=raw,file=$OVMF_VARS \\
   -drive file=$DISK_IMG,format=qcow2,if=virtio \\
   -serial mon:stdio \\
-  -nographic
+  -nographic; \\
+  status=\\\$?; \\
+  echo \"[*] QEMU exited with status \\\$status [launch=$qemu_launch_id]\"; \\
+  exec bash
 " Enter
 #   -nic user,model=virtio,mac=52:54:00:f6:2c:43 \\
 
@@ -457,3 +461,8 @@ else
   echo "ERROR: could not find magic-suspend-token hibernation is NOT working"
   read -p "Press ENTER to exit"
 fi
+
+echo "done shutdown"
+tmux send-keys -t "$PANE" "sudo shutdown now" Enter
+
+wait_for_text "$PANE" "QEMU exited with status" "$hibernate_start_time" 0 0.5 120

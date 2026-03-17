@@ -42,7 +42,48 @@ tmux_capture_scrollback() {
   local pane_target="$1"
   local start_line="${2:--200}"
 
-  tmux capture-pane -p -S "$start_line" -t "$pane_target"
+  tmux capture-pane -p -S "$start_line" -t "$pane_target" | tr -d '\r'
+}
+
+# Wait for a tmux pane to stop changing for a given number of seconds.
+#
+# Args:
+#   $1: tmux pane target
+#   $2: optional quiet period in seconds; defaults to 2
+#   $3: optional poll interval in seconds; defaults to 0.5
+# Returns:
+#   Exits with status 0 once the pane output has been stable long enough.
+wait_for_quiet_seconds() {
+  local pane_target="$1"
+  local quiet_for_s="${2:-2}"
+  local poll_delay_s="${3:-0.5}"
+  local snapshot=""
+  local current_output
+  local last_change_s
+  local now_s
+  local quiet_time_s
+
+  last_change_s=$(date +%s)
+  printf '[*] Waiting for terminal to stay quiet for %ss: 0s' "$quiet_for_s"
+
+  while true; do
+    current_output=$(tmux capture-pane -p -J -t "$pane_target" | tr -d '\r')
+    if [[ "$current_output" != "$snapshot" ]]; then
+      snapshot="$current_output"
+      last_change_s=$(date +%s)
+    fi
+
+    now_s=$(date +%s)
+    quiet_time_s=$((now_s - last_change_s))
+    printf '\r[*] Waiting for terminal to stay quiet for %ss: %ss' "$quiet_for_s" "$quiet_time_s"
+
+    if (( quiet_time_s >= quiet_for_s )); then
+      break
+    fi
+    sleep "$poll_delay_s"
+  done
+
+  printf '\r[*] Waiting for terminal to stay quiet for %ss: done\n' "$quiet_for_s"
 }
 
 # Poll a tmux pane until literal text appears.

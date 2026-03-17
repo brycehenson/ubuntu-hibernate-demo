@@ -30,7 +30,7 @@ sudo apt install cloud-image-utils tmux qemu-utils
 # Run
 
 ```
- ./autoinstall_vm.sh && ./boot_and_check_hiber.sh
+ sudo ./autoinstall_vm.sh && sudo ./boot_and_check_hiber.sh
  ```
 
 if you want to break out While QEMU is attached in the terminal:
